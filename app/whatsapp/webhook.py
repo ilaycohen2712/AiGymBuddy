@@ -115,8 +115,10 @@ async def _handle_message(pool, message: dict, meal_logging, send, queries) -> N
     except Exception:
         logger.warning("mark_as_read failed for message_id=%s, continuing anyway", message_id)
 
+    photo_logged = False
     try:
         reply_text = await meal_logging.handle_incoming_photo(user_id, wa_id, media_id)
+        photo_logged = True
     except httpx.HTTPStatusError as exc:
         # Deliberately not logging exc's default string form: for media
         # downloads it embeds a signed, time-limited CDN URL, which would leak
@@ -131,6 +133,14 @@ async def _handle_message(pool, message: dict, meal_logging, send, queries) -> N
         logger.exception("Failed to handle image message (message_id=%s)", message_id)
         reply_text = FALLBACK_ERROR_REPLY
 
+    if photo_logged:
+        # The meal (if any) has already been durably written by handle_incoming_photo.
+        # Record the dedupe key now, *before* attempting to send the reply, so that a
+        # redelivered webhook (Meta retries on timeout/non-2xx) short-circuits on the
+        # is_message_processed check above instead of re-running vision + the DB write
+        # and double-logging the same photo just because the reply send failed.
+        await queries.record_message(pool, user_id, message_id, direction="in", kind="image")
+
     try:
         await send.send_text_message(wa_id, reply_text)
     except httpx.HTTPStatusError as exc:
@@ -139,9 +149,12 @@ async def _handle_message(pool, message: dict, meal_logging, send, queries) -> N
             exc.response.status_code,
             message_id,
         )
-        return  # don't mark as processed if we couldn't reply — allow a retry
+        return
     except Exception:
         logger.exception("Failed to send reply for message_id=%s", message_id)
         return
 
-    await queries.record_message(pool, user_id, message_id, direction="in", kind="image")
+    if not photo_logged:
+        # Nothing was persisted for this photo — safe to let a retry try again,
+        # so only record it as processed once the fallback reply is confirmed sent.
+        await queries.record_message(pool, user_id, message_id, direction="in", kind="image")

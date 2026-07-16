@@ -273,3 +273,76 @@ def test_mark_as_read_failure_does_not_block_meal_logging(monkeypatch):
 
     assert resp.status_code == 200
     assert handled["called"] is True
+
+
+def test_message_is_recorded_even_when_reply_send_fails_after_meal_logged(monkeypatch):
+    """Regression test: if the meal was already logged successfully but sending
+    the reply then fails (e.g. a timeout that also triggers a Meta redelivery),
+    the message must still be recorded as processed. Otherwise a retry would
+    re-run vision + the DB write and log the same photo a second time."""
+    monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
+    calls = _stub_db(monkeypatch)
+
+    from app.services import meal_logging
+    from app.whatsapp import send
+
+    async def fake_handle_incoming_photo(user_id, wa_id, media_id):
+        return "That's about 400-600 kcal (protein ~30g, carbs ~50g, fat ~15g)."
+
+    async def fake_mark_as_read(message_id):
+        return None
+
+    async def failing_send_text_message(to, body):
+        raise httpx.HTTPStatusError(
+            "server error",
+            request=httpx.Request("POST", "https://graph.facebook.com/x"),
+            response=httpx.Response(500, request=httpx.Request("POST", "https://x")),
+        )
+
+    monkeypatch.setattr(meal_logging, "handle_incoming_photo", fake_handle_incoming_photo)
+    monkeypatch.setattr(send, "mark_as_read", fake_mark_as_read)
+    monkeypatch.setattr(send, "send_text_message", failing_send_text_message)
+
+    client = TestClient(app)
+    body = json.dumps(_image_payload(message_id="wamid.sendfails")).encode()
+
+    resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
+
+    assert resp.status_code == 200
+    assert calls["recorded"] == ("user-for-15551234567", "wamid.sendfails", "in", "image")
+
+
+def test_message_is_not_recorded_when_photo_handling_fails_and_send_fails(monkeypatch):
+    """Complement to the above: if nothing was persisted (handle_incoming_photo
+    itself failed), and the fallback reply also fails to send, a retry should
+    still be allowed — there's no duplicate-write risk since no meal exists yet."""
+    monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
+    calls = _stub_db(monkeypatch)
+
+    from app.services import meal_logging
+    from app.whatsapp import send
+
+    async def failing_handle_incoming_photo(user_id, wa_id, media_id):
+        raise ValueError("vision pipeline exploded")
+
+    async def fake_mark_as_read(message_id):
+        return None
+
+    async def failing_send_text_message(to, body):
+        raise httpx.HTTPStatusError(
+            "server error",
+            request=httpx.Request("POST", "https://graph.facebook.com/x"),
+            response=httpx.Response(500, request=httpx.Request("POST", "https://x")),
+        )
+
+    monkeypatch.setattr(meal_logging, "handle_incoming_photo", failing_handle_incoming_photo)
+    monkeypatch.setattr(send, "mark_as_read", fake_mark_as_read)
+    monkeypatch.setattr(send, "send_text_message", failing_send_text_message)
+
+    client = TestClient(app)
+    body = json.dumps(_image_payload(message_id="wamid.bothfail")).encode()
+
+    resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
+
+    assert resp.status_code == 200
+    assert calls["recorded"] is None
