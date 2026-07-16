@@ -82,7 +82,7 @@ Once per day, the bot proactively sends the user a report covering total calorie
 - **FR-005**: System MUST reset each user's running daily total at the start of a new calendar day in that user's local time zone.
 - **FR-006**: System MUST send exactly one end-of-day report per user every calendar day, containing the user's total calories eaten, total protein/carbs/fat consumed, and a generated feedback message, regardless of whether the user logged any meals that day.
 - **FR-007**: System MUST determine each user's daily calorie target by reusing a previously stored value if one exists, or by asking the user for it directly via chat if none exists yet, then storing the provided value for reuse on subsequent days.
-- **FR-008**: System MUST send the end-of-day report every day regardless of activity; on days with no logged meals, the report MUST present zero totals along with feedback that encourages logging rather than criticizing the lack of data.
+- **FR-008**: On days with no logged meals (a case already covered by FR-006's "regardless of whether the user logged any meals"), the report's zero totals MUST be paired with feedback that encourages logging rather than criticizing the lack of data.
 - **FR-009**: Every proactive message the bot sends, including the end-of-day report, MUST be phrased so that it can be answered, keeping the messaging channel open.
 - **FR-010**: System MUST gracefully handle a photo that cannot be identified as food: inform the user and exclude it from the daily total.
 - **FR-011**: System MUST persist each logged meal entry's result (calorie range, macro range, timestamp, associated user and day) as part of the user's food log history.
@@ -121,3 +121,4 @@ Once per day, the bot proactively sends the user a report covering total calorie
 - The photo-grouping window for combining multiple photos into one meal is a short, fixed duration (e.g., 10 minutes) for the MVP; there is no explicit "done with this meal" user signal.
 - Correcting or editing a previously logged estimate (e.g., "that was actually two plates") is out of scope for this MVP.
 - If a user never responds to the request to set their daily calorie target, the end-of-day report is deferred (not sent) until a target is provided.
+- Photo calorie tracking is a core feature available to all users, not gated behind a paid subscription; the constitution's "subscription status checked before premium features" rule does not apply to this feature (confirmed during `/speckit.analyze`).
