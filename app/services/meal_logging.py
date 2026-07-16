@@ -22,7 +22,10 @@ async def log_meal_photo(
     now: dt.datetime | None = None,
 ) -> MealRecord:
     """Create a new meal entry, or append to an open one within the 10-minute
-    grouping window (FR-014, research.md #2)."""
+    grouping window (FR-014, research.md #2). The window slides: appending a
+    photo refreshes the meal's logged_at to `now`, so a meal stays "open" as
+    long as photos keep arriving within 10 minutes of the *previous* one,
+    rather than being anchored only to the first photo."""
     now = now or dt.datetime.now(dt.UTC)
     foods = vision_result["foods"]
     total_calories = vision_result["total_calories"]
@@ -30,7 +33,7 @@ async def log_meal_photo(
 
     existing = await repo.find_open_meal(user_id, now, GROUPING_WINDOW)
     if existing is not None:
-        return await repo.append_to_meal(existing, media_id, foods, total_calories, confidence)
+        return await repo.append_to_meal(existing, media_id, foods, total_calories, confidence, now)
     return await repo.create_meal(user_id, media_id, foods, total_calories, confidence, now)
 
 
@@ -48,16 +51,16 @@ def format_range_reply(meal: MealRecord) -> str:
     )
 
 
-async def handle_incoming_photo(wa_phone: str, media_id: str) -> str:
-    """Webhook-facing entrypoint: resolves the real user/repo/vision pipeline
-    and returns the reply text to send back to the user."""
+async def handle_incoming_photo(user_id: str, wa_phone: str, media_id: str) -> str:
+    """Webhook-facing entrypoint: `user_id` is resolved by the caller (webhook
+    dispatch) so it can also be used for message-dedupe bookkeeping without
+    resolving the user twice. Returns the reply text to send back."""
     from app.db import queries
     from app.db.pool import get_pool
     from app.services import vision
     from app.whatsapp import media as media_client
 
     pool = await get_pool()
-    user_id = await queries.get_or_create_user_id(pool, wa_phone)
     repo = queries.AsyncpgMealRepository(pool)
 
     image_bytes = await media_client.download_media(media_id)

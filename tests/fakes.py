@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from app.db.queries import MealRecord
+from app.db.queries import MealRecord, _combine_confidence
 
 
 class InMemoryMealRepository:
@@ -52,9 +52,27 @@ class InMemoryMealRepository:
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
+        now: dt.datetime,
     ) -> MealRecord:
         meal.photo_media_ids.append(media_id)
         meal.foods.extend(foods)
         meal.total_calories += total_calories
+        meal.confidence = _combine_confidence(meal.confidence, confidence)
+        meal.logged_at = now
         self.meals[meal.id] = meal
         return meal
+
+
+class InMemoryMessageStore:
+    """Fakes app.db.queries.is_message_processed / record_message for tests."""
+
+    def __init__(self) -> None:
+        self.processed: set[str] = set()
+
+    async def is_message_processed(self, pool, wa_message_id: str) -> bool:
+        return wa_message_id in self.processed
+
+    async def record_message(
+        self, pool, user_id, wa_message_id, direction, kind, body=None
+    ) -> None:
+        self.processed.add(wa_message_id)

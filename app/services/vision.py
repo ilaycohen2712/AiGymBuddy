@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 from pathlib import Path
@@ -10,12 +11,15 @@ PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "calorie_vision.md"
 MODEL = "claude-sonnet-5"
 
 _client: anthropic.AsyncAnthropic | None = None
+_client_lock = asyncio.Lock()
 
 
-def _get_client() -> anthropic.AsyncAnthropic:
+async def _get_client() -> anthropic.AsyncAnthropic:
     global _client
     if _client is None:
-        _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        async with _client_lock:
+            if _client is None:  # re-check: another task may have won the race
+                _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
     return _client
 
 
@@ -24,11 +28,18 @@ def _load_prompt() -> str:
 
 
 def _extract_json_block(text: str) -> dict:
+    """Strip a ```json ... ``` fence if present. Only strips a leading/trailing
+    triple-backtick fence, not arbitrary backticks, so malformed fencing fails
+    loudly (via json.JSONDecodeError) rather than silently mangling content."""
     text = text.strip()
     if text.startswith("```"):
-        text = text.strip("`")
+        text = text[3:]
         if text.startswith("json"):
             text = text[4:]
+        text = text.strip()
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
     return json.loads(text)
 
 
@@ -48,8 +59,10 @@ def _validate_schema(result: dict) -> dict:
 async def analyze_photo(image_bytes: bytes, media_type: str = "image/jpeg") -> dict:
     """Send a food photo to Claude using the versioned calorie_vision prompt
     (app/prompts/calorie_vision.md) and return a result validated against the
-    calorie-estimation schema (Constitution IV)."""
-    client = _get_client()
+    calorie-estimation schema (Constitution IV). Raises ValueError or
+    json.JSONDecodeError on a non-conforming response — callers must handle
+    this and fall back to a graceful user-facing reply rather than crash."""
+    client = await _get_client()
     image_b64 = base64.standard_b64encode(image_bytes).decode()
 
     response = await client.messages.create(

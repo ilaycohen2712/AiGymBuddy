@@ -23,6 +23,13 @@ async def mark_as_read(message_id: str) -> None:
 
 
 async def send_text_message(to: str, body: str) -> dict:
+    # KNOWN GAP: no fallback to a pre-approved template message on error 131047
+    # (24h customer-service window expired). For User Story 1 this is
+    # low-probability — an inbound photo always reopens the window right
+    # before this call — but it's a real gap once proactive pushes exist
+    # (User Story 3's end-of-day report). app/whatsapp/templates.py and a
+    # 131047-specific fallback should land alongside that story rather than
+    # being silently skipped.
     if len(body) > MAX_TEXT_LENGTH:
         body = body[: MAX_TEXT_LENGTH - 1]
 

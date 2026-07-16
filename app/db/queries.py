@@ -18,6 +18,14 @@ class MealRecord:
     confidence: float | None = None
 
 
+def _combine_confidence(a: float | None, b: float | None) -> float | None:
+    """Combining two photos' confidence into one meal's confidence uses the
+    minimum, not the latest value: the combined estimate is only as reliable
+    as its least-confident component photo."""
+    values = [v for v in (a, b) if v is not None]
+    return min(values) if values else None
+
+
 class MealRepository(Protocol):
     """Storage boundary for meal entries. AsyncpgMealRepository is the real,
     Postgres-backed implementation; tests use an in-memory fake (tests/fakes.py)
@@ -44,6 +52,7 @@ class MealRepository(Protocol):
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
+        now: dt.datetime,
     ) -> MealRecord: ...
 
 
@@ -105,16 +114,20 @@ class AsyncpgMealRepository:
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
+        now: dt.datetime,
     ) -> MealRecord:
         combined_media = [*meal.photo_media_ids, media_id]
         combined_foods = [*meal.foods, *foods]
         combined_total = meal.total_calories + total_calories
+        combined_confidence = _combine_confidence(meal.confidence, confidence)
         row = await self._pool.fetchrow(
-            "UPDATE meals SET photo_media_ids = $1, foods = $2, total_calories = $3 "
-            "WHERE id = $4 RETURNING *",
+            "UPDATE meals SET photo_media_ids = $1, foods = $2, total_calories = $3, "
+            "confidence = $4, logged_at = $5 WHERE id = $6 RETURNING *",
             combined_media,
             json.dumps(combined_foods),
             combined_total,
+            combined_confidence,
+            now,
             uuid.UUID(meal.id),
         )
         return _row_to_record(row)
@@ -128,3 +141,27 @@ async def get_or_create_user_id(pool, wa_phone: str) -> str:
         "INSERT INTO users (wa_phone) VALUES ($1) RETURNING id", wa_phone
     )
     return str(row["id"])
+
+
+async def is_message_processed(pool, wa_message_id: str) -> bool:
+    """Dedupe guard: Meta redelivers webhooks on timeout/non-2xx, so any
+    message must be checked against `messages.wa_message_id` before
+    (re)processing it (per whatsapp-api skill's dedupe convention)."""
+    row = await pool.fetchrow(
+        "SELECT 1 FROM messages WHERE wa_message_id = $1", wa_message_id
+    )
+    return row is not None
+
+
+async def record_message(
+    pool, user_id: str, wa_message_id: str, direction: str, kind: str, body: str | None = None
+) -> None:
+    await pool.execute(
+        "INSERT INTO messages (user_id, direction, wa_message_id, body, kind) "
+        "VALUES ($1, $2, $3, $4, $5) ON CONFLICT (wa_message_id) DO NOTHING",
+        uuid.UUID(user_id),
+        direction,
+        wa_message_id,
+        body,
+        kind,
+    )
