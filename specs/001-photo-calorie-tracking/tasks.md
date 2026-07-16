@@ -25,9 +25,9 @@ description: "Task list template for feature implementation"
 
 **Purpose**: Project initialization — nothing under `app/` or `tests/` exists yet.
 
-- [ ] T001 Create backend project structure per plan.md (`app/whatsapp/`, `app/prompts/`, `app/services/`, `app/scheduler/`, `app/db/`, `tests/contract/`, `tests/integration/`, `tests/unit/`, `tests/fixtures/food_photos/`)
-- [ ] T002 Initialize Python 3.11+ project with FastAPI, pytest, Claude API client, and Postgres client dependencies in `pyproject.toml`/`requirements.txt`
-- [ ] T003 [P] Configure linting/formatting (ruff/black) and pytest config in `pyproject.toml`
+- [X] T001 Create backend project structure per plan.md (`app/whatsapp/`, `app/prompts/`, `app/services/`, `app/scheduler/`, `app/db/`, `tests/contract/`, `tests/integration/`, `tests/unit/`, `tests/fixtures/food_photos/`)
+- [X] T002 Initialize Python 3.11+ project with FastAPI, pytest, Claude API client, and Postgres client dependencies in `pyproject.toml`/`requirements.txt`
+- [X] T003 [P] Configure linting/formatting (ruff/black) and pytest config in `pyproject.toml`
 
 ---
 
@@ -37,12 +37,12 @@ description: "Task list template for feature implementation"
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Setup migration framework and initial schema migration (baseline `users`, `meals`, `daily_totals`, `messages` tables per `.claude/skills/db-schema/SKILL.md`) in `app/db/migrations/0001_init.sql`
-- [ ] T005 [P] Implement webhook signature verification (`X-Hub-Signature-256`) and the `hub.challenge` verification handshake in `app/whatsapp/webhook.py`
-- [ ] T006 [P] Implement media download helper (fetch image by media ID, 5-min-valid download URL) in `app/whatsapp/media.py`
-- [ ] T007 [P] Implement outbound WhatsApp message sending (mark inbound read, typing indicator, POST to Graph API messages endpoint, 4096-char max) in `app/whatsapp/send.py`
-- [ ] T008 Create FastAPI app entrypoint wiring the webhook route (GET verification + POST events) in `app/main.py` (depends on T005)
-- [ ] T009 [P] Implement environment/config management (WhatsApp app secret/token, Claude API key, DB URL) in `app/config.py`
+- [X] T004 Setup migration framework and initial schema migration (baseline `users`, `meals`, `daily_totals`, `messages` tables per `.claude/skills/db-schema/SKILL.md`) in `app/db/migrations/0001_init.sql`
+- [X] T005 [P] Implement webhook signature verification (`X-Hub-Signature-256`) and the `hub.challenge` verification handshake in `app/whatsapp/webhook.py`
+- [X] T006 [P] Implement media download helper (fetch image by media ID, 5-min-valid download URL) in `app/whatsapp/media.py`
+- [X] T007 [P] Implement outbound WhatsApp message sending (mark inbound read, typing indicator, POST to Graph API messages endpoint, 4096-char max) in `app/whatsapp/send.py`
+- [X] T008 Create FastAPI app entrypoint wiring the webhook route (GET verification + POST events) in `app/main.py` (depends on T005)
+- [X] T009 [P] Implement environment/config management (WhatsApp app secret/token, Claude API key, DB URL) in `app/config.py`
 
 **Checkpoint**: Foundation ready — user story implementation can now begin
 
@@ -56,19 +56,19 @@ description: "Task list template for feature implementation"
 
 ### Tests for User Story 1
 
-- [ ] T010 [P] [US1] Contract test for inbound image webhook handling per `contracts/webhook-image-message.md` in `tests/contract/test_webhook_image.py`
-- [ ] T011 [P] [US1] Integration test: two photos sent within the 10-minute grouping window combine into one meal entry in `tests/integration/test_meal_grouping.py`
-- [ ] T012 [P] [US1] Accuracy regression test against labeled fixtures (Constitution I gate: >5% MAE regression fails) in `tests/test_calorie_accuracy.py` using `tests/fixtures/food_photos/`
+- [X] T010 [P] [US1] Contract test for inbound image webhook handling per `contracts/webhook-image-message.md` in `tests/contract/test_webhook_image.py`
+- [X] T011 [P] [US1] Integration test: two photos sent within the 10-minute grouping window combine into one meal entry in `tests/integration/test_meal_grouping.py`
+- [X] T012 [P] [US1] Accuracy regression test against labeled fixtures (Constitution I gate: >5% MAE regression fails) in `tests/test_calorie_accuracy.py` using `tests/fixtures/food_photos/`
 
 ### Implementation for User Story 1
 
-- [ ] T013 [P] [US1] Author versioned calorie-vision prompt per `.claude/skills/calorie-estimation/SKILL.md` schema in `app/prompts/calorie_vision.md`, including an explicit instruction that meal-reply text must never contain medical advice or prescriptive diet instructions (FR-013)
-- [ ] T014 [US1] Implement vision pipeline client (call Claude API with T013's prompt, validate response against the `{"foods":[...],"total_calories":0,"confidence":0.0,"clarifying_question":null}` schema) in `app/services/vision.py` (depends on T013)
-- [ ] T015 [US1] Implement meal entry queries (create meal row; append foods + `photo_media_ids` to an existing row) in `app/db/queries.py` (depends on T004)
-- [ ] T016 [US1] Implement meal-logging service: check for an open meal within the 10-minute grouping window, create-or-append, recompute combined totals per `research.md` #2 in `app/services/meal_logging.py` (depends on T014, T015)
-- [ ] T017 [US1] Wire image-message handling into the webhook: download media (T006) → vision (T014) → meal-logging (T016) → reply with the ±20% calorie/macro range in `app/whatsapp/webhook.py` (depends on T016, T006, T007, T008)
-- [ ] T018 [US1] Handle photos that can't be identified as food: reply explaining, exclude from daily total (FR-010) in `app/services/meal_logging.py`
-- [ ] T019 [US1] Add structured logging for meal-logging operations, phone numbers masked, no PII (Security requirement) in `app/services/meal_logging.py`
+- [X] T013 [P] [US1] Author versioned calorie-vision prompt per `.claude/skills/calorie-estimation/SKILL.md` schema in `app/prompts/calorie_vision.md`, including an explicit instruction that meal-reply text must never contain medical advice or prescriptive diet instructions (FR-013)
+- [X] T014 [US1] Implement vision pipeline client (call Claude API with T013's prompt, validate response against the `{"foods":[...],"total_calories":0,"confidence":0.0,"clarifying_question":null}` schema) in `app/services/vision.py` (depends on T013)
+- [X] T015 [US1] Implement meal entry queries (create meal row; append foods + `photo_media_ids` to an existing row) in `app/db/queries.py` (depends on T004)
+- [X] T016 [US1] Implement meal-logging service: check for an open meal within the 10-minute grouping window, create-or-append, recompute combined totals per `research.md` #2 in `app/services/meal_logging.py` (depends on T014, T015)
+- [X] T017 [US1] Wire image-message handling into the webhook: download media (T006) → vision (T014) → meal-logging (T016) → reply with the ±20% calorie/macro range in `app/whatsapp/webhook.py` (depends on T016, T006, T007, T008)
+- [X] T018 [US1] Handle photos that can't be identified as food: reply explaining, exclude from daily total (FR-010) in `app/services/meal_logging.py`
+- [X] T019 [US1] Add structured logging for meal-logging operations, phone numbers masked, no PII (Security requirement) in `app/services/meal_logging.py`
 
 **Checkpoint**: User Story 1 is fully functional and independently testable/demoable.
 
