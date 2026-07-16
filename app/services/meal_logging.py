@@ -63,8 +63,8 @@ async def handle_incoming_photo(user_id: str, wa_phone: str, media_id: str) -> s
     pool = await get_pool()
     repo = queries.AsyncpgMealRepository(pool)
 
-    image_bytes = await media_client.download_media(media_id)
-    result = await vision.analyze_photo(image_bytes)
+    image_bytes, media_type = await media_client.download_media(media_id)
+    result = await vision.analyze_photo(image_bytes, media_type=media_type)
 
     if not result["foods"]:
         logger.info("Photo from %s not recognized as food (media_id=%s)", _mask(wa_phone), media_id)
