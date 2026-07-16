@@ -54,9 +54,9 @@
 
 ## 8. Subscription/premium gating
 
-**Decision**: Treat photo calorie tracking as a core (non-premium-gated) feature for this MVP; the spec does not mention billing tie-in.
+**Decision**: Photo calorie tracking is a core (non-premium-gated) feature — confirmed with the stakeholder during `/speckit.analyze`. No subscription-status check is required before the photo-reply flow.
 
-**Rationale**: Avoids scope creep into Stripe/subscription logic not requested. Flagged as an assumption for stakeholder confirmation — if this should be premium-gated, the existing subscription-status check (Constitution/Security) would need to run before P1's photo-reply flow.
+**Rationale**: Avoids scope creep into Stripe/subscription logic not requested; recorded as an explicit Assumption in spec.md rather than an open question, since it's now a confirmed product decision, not a placeholder.
 
 ## 9. Scheduling the once-daily report
 

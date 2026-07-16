@@ -62,7 +62,7 @@ description: "Task list template for feature implementation"
 
 ### Implementation for User Story 1
 
-- [ ] T013 [P] [US1] Author versioned calorie-vision prompt per `.claude/skills/calorie-estimation/SKILL.md` schema in `app/prompts/calorie_vision.md`
+- [ ] T013 [P] [US1] Author versioned calorie-vision prompt per `.claude/skills/calorie-estimation/SKILL.md` schema in `app/prompts/calorie_vision.md`, including an explicit instruction that meal-reply text must never contain medical advice or prescriptive diet instructions (FR-013)
 - [ ] T014 [US1] Implement vision pipeline client (call Claude API with T013's prompt, validate response against the `{"foods":[...],"total_calories":0,"confidence":0.0,"clarifying_question":null}` schema) in `app/services/vision.py` (depends on T013)
 - [ ] T015 [US1] Implement meal entry queries (create meal row; append foods + `photo_media_ids` to an existing row) in `app/db/queries.py` (depends on T004)
 - [ ] T016 [US1] Implement meal-logging service: check for an open meal within the 10-minute grouping window, create-or-append, recompute combined totals per `research.md` #2 in `app/services/meal_logging.py` (depends on T014, T015)
