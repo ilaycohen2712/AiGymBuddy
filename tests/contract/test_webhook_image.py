@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 
+import httpx
 from fastapi.testclient import TestClient
 
 from app.config import settings
@@ -232,3 +233,43 @@ def test_post_webhook_falls_back_gracefully_when_processing_fails(monkeypatch):
 
     assert resp.status_code == 200
     assert "try" in sent["args"][1].lower() or "sorry" in sent["args"][1].lower()
+
+
+def test_mark_as_read_failure_does_not_block_meal_logging(monkeypatch):
+    """Regression test for a bug found via live verification: mark_as_read and
+    handle_incoming_photo used to share one try block, so mark_as_read failing
+    (e.g. a transient Meta hiccup) silently dropped the user's photo — the
+    core feature never even ran."""
+    monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
+    _stub_db(monkeypatch)
+
+    from app.services import meal_logging
+    from app.whatsapp import send
+
+    handled = {"called": False}
+
+    async def failing_mark_as_read(message_id):
+        raise httpx.HTTPStatusError(
+            "unauthorized",
+            request=httpx.Request("POST", "https://graph.facebook.com/x"),
+            response=httpx.Response(401, request=httpx.Request("POST", "https://x")),
+        )
+
+    async def fake_handle_incoming_photo(user_id, wa_id, media_id):
+        handled["called"] = True
+        return "That's about 400-600 kcal (protein ~30g, carbs ~50g, fat ~15g)."
+
+    async def fake_send_text_message(to, body):
+        return {"messages": [{"id": "wamid.reply"}]}
+
+    monkeypatch.setattr(send, "mark_as_read", failing_mark_as_read)
+    monkeypatch.setattr(meal_logging, "handle_incoming_photo", fake_handle_incoming_photo)
+    monkeypatch.setattr(send, "send_text_message", fake_send_text_message)
+
+    client = TestClient(app)
+    body = json.dumps(_image_payload(message_id="wamid.markreadfails")).encode()
+
+    resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
+
+    assert resp.status_code == 200
+    assert handled["called"] is True

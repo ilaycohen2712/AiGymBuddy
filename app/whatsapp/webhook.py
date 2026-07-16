@@ -99,8 +99,23 @@ async def _handle_message(pool, message: dict, meal_logging, send, queries) -> N
         logger.info("Duplicate webhook delivery for message_id=%s, skipping", message_id)
         return
 
+    # Best-effort only: mark_as_read is a UX nicety (closest stand-in for a
+    # typing indicator), not core functionality. It must never be able to
+    # block the actual photo-processing pipeline below — verified live: a
+    # failing mark_as_read call previously short-circuited the whole handler
+    # before meal_logging ever ran, silently dropping the user's photo.
     try:
         await send.mark_as_read(message_id)
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "mark_as_read failed (status=%s) for message_id=%s, continuing anyway",
+            exc.response.status_code,
+            message_id,
+        )
+    except Exception:
+        logger.warning("mark_as_read failed for message_id=%s, continuing anyway", message_id)
+
+    try:
         reply_text = await meal_logging.handle_incoming_photo(user_id, wa_id, media_id)
     except httpx.HTTPStatusError as exc:
         # Deliberately not logging exc's default string form: for media
