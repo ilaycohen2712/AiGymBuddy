@@ -77,10 +77,14 @@ async def test_different_users_never_share_a_meal():
 
 
 @pytest.mark.asyncio
-async def test_grouping_window_slides_with_each_new_photo():
-    """A third photo 9 minutes after the second (14 min after the first)
-    still joins the same meal — the window refreshes on each photo rather
-    than being anchored only to the first one."""
+async def test_grouping_window_is_anchored_to_first_photo_not_sliding():
+    """Regression test for a bug found via live multi-photo testing: a
+    sliding window (refreshing on every append) let a meal stay open
+    indefinitely as long as *some* photo arrived within 10 min of the
+    *previous* one, silently merging unrelated meals across a long test
+    session. The window must be anchored to the first photo instead: a photo
+    9 min after the first joins, but one 11 min after the first does NOT,
+    even though it's only 2 min after the second photo."""
     repo = InMemoryMealRepository()
     user_id = "user-1"
     t0 = dt.datetime(2026, 7, 16, 12, 0, tzinfo=dt.UTC)
@@ -92,12 +96,16 @@ async def test_grouping_window_slides_with_each_new_photo():
         user_id, "media-2", _vision_result("chicken", 250), repo, now=t0 + dt.timedelta(minutes=9)
     )
     third = await meal_logging.log_meal_photo(
-        user_id, "media-3", _vision_result("salad", 100), repo, now=t0 + dt.timedelta(minutes=18)
+        user_id, "media-3", _vision_result("salad", 100), repo, now=t0 + dt.timedelta(minutes=11)
     )
 
-    assert first.id == second.id == third.id
-    assert third.photo_media_ids == ["media-1", "media-2", "media-3"]
-    assert third.total_calories == 650
+    assert first.id == second.id
+    assert second.photo_media_ids == ["media-1", "media-2"]
+    assert second.total_calories == 550
+
+    assert third.id != first.id
+    assert third.photo_media_ids == ["media-3"]
+    assert third.total_calories == 100
 
 
 @pytest.mark.asyncio

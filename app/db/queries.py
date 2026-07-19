@@ -52,7 +52,6 @@ class MealRepository(Protocol):
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
-        now: dt.datetime,
     ) -> MealRecord: ...
 
 
@@ -114,20 +113,24 @@ class AsyncpgMealRepository:
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
-        now: dt.datetime,
     ) -> MealRecord:
+        # logged_at is deliberately NOT updated here: the grouping window is
+        # anchored to the first photo (research.md #2 / FR-014), not sliding.
+        # A sliding window (refreshing on every append) was tried and found live
+        # to let a meal stay "open" indefinitely as long as *any* photo arrived
+        # within 10 min of the *previous* one — during an active multi-photo
+        # test session this silently merged unrelated meals across over an hour.
         combined_media = [*meal.photo_media_ids, media_id]
         combined_foods = [*meal.foods, *foods]
         combined_total = meal.total_calories + total_calories
         combined_confidence = _combine_confidence(meal.confidence, confidence)
         row = await self._pool.fetchrow(
             "UPDATE meals SET photo_media_ids = $1, foods = $2, total_calories = $3, "
-            "confidence = $4, logged_at = $5 WHERE id = $6 RETURNING *",
+            "confidence = $4 WHERE id = $5 RETURNING *",
             combined_media,
             json.dumps(combined_foods),
             combined_total,
             combined_confidence,
-            now,
             uuid.UUID(meal.id),
         )
         return _row_to_record(row)

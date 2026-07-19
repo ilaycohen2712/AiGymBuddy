@@ -8,9 +8,13 @@ from app.db.queries import MealRecord, MealRepository
 logger = logging.getLogger(__name__)
 
 GROUPING_WINDOW = dt.timedelta(minutes=10)
+LOW_CONFIDENCE_THRESHOLD = 0.6
 
 NOT_FOOD_REPLY = (
     "I couldn't spot any food in that photo — could you send a clearer picture of your meal?"
+)
+LOW_CONFIDENCE_FALLBACK_REPLY = (
+    "I'm not confident enough about that photo to log it — could you send a clearer one?"
 )
 
 
@@ -22,10 +26,11 @@ async def log_meal_photo(
     now: dt.datetime | None = None,
 ) -> MealRecord:
     """Create a new meal entry, or append to an open one within the 10-minute
-    grouping window (FR-014, research.md #2). The window slides: appending a
-    photo refreshes the meal's logged_at to `now`, so a meal stays "open" as
-    long as photos keep arriving within 10 minutes of the *previous* one,
-    rather than being anchored only to the first photo."""
+    grouping window (FR-014, research.md #2). The window is anchored to the
+    *first* photo: appending does not extend it, so a meal always closes
+    exactly 10 minutes after it started, no matter how many photos arrive in
+    between. A sliding window (refreshing on every append) was tried and found
+    live to merge unrelated meals across an entire multi-hour test session."""
     now = now or dt.datetime.now(dt.UTC)
     foods = vision_result["foods"]
     total_calories = vision_result["total_calories"]
@@ -33,7 +38,7 @@ async def log_meal_photo(
 
     existing = await repo.find_open_meal(user_id, now, GROUPING_WINDOW)
     if existing is not None:
-        return await repo.append_to_meal(existing, media_id, foods, total_calories, confidence, now)
+        return await repo.append_to_meal(existing, media_id, foods, total_calories, confidence)
     return await repo.create_meal(user_id, media_id, foods, total_calories, confidence, now)
 
 
@@ -69,6 +74,24 @@ async def handle_incoming_photo(user_id: str, wa_phone: str, media_id: str) -> s
     if not result["foods"]:
         logger.info("Photo from %s not recognized as food (media_id=%s)", _mask(wa_phone), media_id)
         return NOT_FOOD_REPLY
+
+    confidence = result.get("confidence")
+    clarifying_question = result.get("clarifying_question")
+    if confidence is not None and confidence < LOW_CONFIDENCE_THRESHOLD:
+        # Per app/prompts/calorie_vision.md rule 6: below this threshold the
+        # model is instructed to ask ONE clarifying question rather than
+        # guess. This was previously never wired up — the code logged and
+        # replied with the guess regardless of confidence, which live testing
+        # showed producing unreliable, hard-to-trust totals (e.g. 0.55
+        # confidence treated identically to 0.95).
+        logger.info(
+            "Low-confidence photo from %s (confidence=%.2f, media_id=%s), "
+            "asking for clarification instead of logging",
+            _mask(wa_phone),
+            confidence,
+            media_id,
+        )
+        return clarifying_question or LOW_CONFIDENCE_FALLBACK_REPLY
 
     meal = await log_meal_photo(user_id, media_id, result, repo)
     logger.info(

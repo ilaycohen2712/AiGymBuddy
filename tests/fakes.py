@@ -52,13 +52,14 @@ class InMemoryMealRepository:
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
-        now: dt.datetime,
     ) -> MealRecord:
+        # logged_at is deliberately left unchanged — the window is anchored to
+        # the first photo, not sliding. See queries.py's AsyncpgMealRepository
+        # for the full rationale.
         meal.photo_media_ids.append(media_id)
         meal.foods.extend(foods)
         meal.total_calories += total_calories
         meal.confidence = _combine_confidence(meal.confidence, confidence)
-        meal.logged_at = now
         self.meals[meal.id] = meal
         return meal
 
