@@ -346,3 +346,87 @@ def test_message_is_not_recorded_when_photo_handling_fails_and_send_fails(monkey
 
     assert resp.status_code == 200
     assert calls["recorded"] is None
+
+
+def _text_payload(
+    wa_id: str = "15551234567", body_text: str = "hi", message_id: str = "wamid.text1"
+) -> dict:
+    return {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "id": message_id,
+                                    "from": wa_id,
+                                    "type": "text",
+                                    "text": {"body": body_text},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+
+def test_text_reply_completes_pending_clarification(monkeypatch):
+    monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
+    calls = _stub_db(monkeypatch)
+
+    from app.services import meal_logging
+
+    captured = {}
+
+    async def fake_handle_clarification_reply(user_id, wa_id, text):
+        captured["args"] = (user_id, wa_id, text)
+        return "That's about 176-264 kcal (protein ~6g, carbs ~24g, fat ~6g)."
+
+    monkeypatch.setattr(meal_logging, "handle_clarification_reply", fake_handle_clarification_reply)
+
+    client = TestClient(app)
+    body = json.dumps(
+        _text_payload(wa_id="15551234567", body_text="It's vegetable", message_id="wamid.clarify1")
+    ).encode()
+
+    resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
+
+    assert resp.status_code == 200
+    assert captured["args"] == ("user-for-15551234567", "15551234567", "It's vegetable")
+    assert calls["recorded"] == ("user-for-15551234567", "wamid.clarify1", "in", "text")
+
+
+def test_text_message_ignored_when_nothing_pending(monkeypatch):
+    """This bot isn't a general chat — a text message with no outstanding
+    clarifying question must be silently ignored, no reply sent."""
+    monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
+    calls = _stub_db(monkeypatch)
+
+    from app.services import meal_logging
+    from app.whatsapp import send
+
+    sent = {"called": False}
+
+    async def fake_handle_clarification_reply(user_id, wa_id, text):
+        return None
+
+    async def fake_send_text_message(to, body):
+        sent["called"] = True
+        return {"messages": [{"id": "wamid.reply"}]}
+
+    monkeypatch.setattr(meal_logging, "handle_clarification_reply", fake_handle_clarification_reply)
+    monkeypatch.setattr(send, "send_text_message", fake_send_text_message)
+
+    client = TestClient(app)
+    body = json.dumps(
+        _text_payload(body_text="random chit chat", message_id="wamid.random1")
+    ).encode()
+
+    resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
+
+    assert resp.status_code == 200
+    assert sent["called"] is False
+    assert calls["recorded"] is None

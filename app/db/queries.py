@@ -156,6 +156,38 @@ async def is_message_processed(pool, wa_message_id: str) -> bool:
     return row is not None
 
 
+async def set_pending_clarification(
+    pool, user_id: str, media_id: str, media_type: str, question: str
+) -> None:
+    """Remember the outstanding clarifying question (calorie_vision.md rule 6)
+    so a text reply can resume this photo's analysis instead of it being a
+    dead end. At most one pending clarification per user at a time."""
+    await pool.execute(
+        "INSERT INTO pending_clarifications (user_id, media_id, media_type, question) "
+        "VALUES ($1, $2, $3, $4) "
+        "ON CONFLICT (user_id) DO UPDATE SET media_id = $2, media_type = $3, "
+        "question = $4, asked_at = now()",
+        uuid.UUID(user_id),
+        media_id,
+        media_type,
+        question,
+    )
+
+
+async def get_pending_clarification(pool, user_id: str) -> dict | None:
+    row = await pool.fetchrow(
+        "SELECT media_id, media_type, question FROM pending_clarifications WHERE user_id = $1",
+        uuid.UUID(user_id),
+    )
+    return dict(row) if row else None
+
+
+async def clear_pending_clarification(pool, user_id: str) -> None:
+    await pool.execute(
+        "DELETE FROM pending_clarifications WHERE user_id = $1", uuid.UUID(user_id)
+    )
+
+
 async def record_message(
     pool, user_id: str, wa_message_id: str, direction: str, kind: str, body: str | None = None
 ) -> None:

@@ -8,13 +8,9 @@ from app.db.queries import MealRecord, MealRepository
 logger = logging.getLogger(__name__)
 
 GROUPING_WINDOW = dt.timedelta(minutes=10)
-LOW_CONFIDENCE_THRESHOLD = 0.6
 
 NOT_FOOD_REPLY = (
     "I couldn't spot any food in that photo — could you send a clearer picture of your meal?"
-)
-LOW_CONFIDENCE_FALLBACK_REPLY = (
-    "I'm not confident enough about that photo to log it — could you send a clearer one?"
 )
 
 
@@ -75,23 +71,22 @@ async def handle_incoming_photo(user_id: str, wa_phone: str, media_id: str) -> s
         logger.info("Photo from %s not recognized as food (media_id=%s)", _mask(wa_phone), media_id)
         return NOT_FOOD_REPLY
 
-    confidence = result.get("confidence")
     clarifying_question = result.get("clarifying_question")
-    if confidence is not None and confidence < LOW_CONFIDENCE_THRESHOLD:
-        # Per app/prompts/calorie_vision.md rule 6: below this threshold the
-        # model is instructed to ask ONE clarifying question rather than
-        # guess. This was previously never wired up — the code logged and
-        # replied with the guess regardless of confidence, which live testing
-        # showed producing unreliable, hard-to-trust totals (e.g. 0.55
-        # confidence treated identically to 0.95).
-        logger.info(
-            "Low-confidence photo from %s (confidence=%.2f, media_id=%s), "
-            "asking for clarification instead of logging",
-            _mask(wa_phone),
-            confidence,
-            media_id,
+    if clarifying_question:
+        # Per app/prompts/calorie_vision.md (v2) rule 6: only fires when
+        # something essential is genuinely not visible (hidden filling,
+        # opaque cup, etc) — not for general uncertainty about visible food.
+        # Most photos should reach the estimate path below instead.
+        await queries.set_pending_clarification(
+            pool, user_id, media_id, media_type, clarifying_question
         )
-        return clarifying_question or LOW_CONFIDENCE_FALLBACK_REPLY
+        logger.info(
+            "Photo from %s needs clarification (media_id=%s): %s",
+            _mask(wa_phone),
+            media_id,
+            clarifying_question,
+        )
+        return clarifying_question
 
     meal = await log_meal_photo(user_id, media_id, result, repo)
     logger.info(
@@ -99,6 +94,51 @@ async def handle_incoming_photo(user_id: str, wa_phone: str, media_id: str) -> s
         _mask(wa_phone),
         meal.id,
         len(meal.photo_media_ids),
+        meal.total_calories,
+    )
+    return format_range_reply(meal)
+
+
+async def handle_clarification_reply(user_id: str, wa_phone: str, text: str) -> str | None:
+    """Webhook-facing entrypoint for a text message. Returns None if this user
+    has no pending clarifying question (caller should treat the text as
+    unhandled — this is not a general-purpose chat, only the completion path
+    for calorie_vision.md's clarifying_question flow). Otherwise re-analyzes
+    the original photo with the user's answer and logs the meal."""
+    from app.db import queries
+    from app.db.pool import get_pool
+    from app.services import vision
+    from app.whatsapp import media as media_client
+
+    pool = await get_pool()
+    pending = await queries.get_pending_clarification(pool, user_id)
+    if pending is None:
+        return None
+
+    repo = queries.AsyncpgMealRepository(pool)
+    image_bytes, _ = await media_client.download_media(pending["media_id"])
+    result = await vision.analyze_photo(
+        image_bytes, media_type=pending["media_type"], clarification=text
+    )
+    await queries.clear_pending_clarification(pool, user_id)
+
+    if not result["foods"]:
+        logger.info(
+            "Clarified photo from %s still not recognized as food (media_id=%s)",
+            _mask(wa_phone),
+            pending["media_id"],
+        )
+        return NOT_FOOD_REPLY
+
+    # Deliberately not re-triggering a second clarifying_question here, even
+    # if the model still returns one — cap the back-and-forth at one round
+    # trip and log the best-effort estimate rather than risk an unbounded
+    # question loop.
+    meal = await log_meal_photo(user_id, pending["media_id"], result, repo)
+    logger.info(
+        "Logged clarified meal for %s (meal_id=%s, total_calories=%.0f)",
+        _mask(wa_phone),
+        meal.id,
         meal.total_calories,
     )
     return format_range_reply(meal)

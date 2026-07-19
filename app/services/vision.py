@@ -56,14 +56,27 @@ def _validate_schema(result: dict) -> dict:
     return result
 
 
-async def analyze_photo(image_bytes: bytes, media_type: str = "image/jpeg") -> dict:
+async def analyze_photo(
+    image_bytes: bytes, media_type: str = "image/jpeg", clarification: str | None = None
+) -> dict:
     """Send a food photo to Claude using the versioned calorie_vision prompt
     (app/prompts/calorie_vision.md) and return a result validated against the
     calorie-estimation schema (Constitution IV). Raises ValueError or
     json.JSONDecodeError on a non-conforming response — callers must handle
-    this and fall back to a graceful user-facing reply rather than crash."""
+    this and fall back to a graceful user-facing reply rather than crash.
+
+    `clarification`: when this photo previously triggered a clarifying
+    question, pass the user's text reply here so the model can complete a
+    full analysis instead of asking again (prompt rule 10)."""
     client = await _get_client()
     image_b64 = base64.standard_b64encode(image_bytes).decode()
+
+    prompt_text = "Analyze this food photo."
+    if clarification:
+        prompt_text = (
+            "Analyze this food photo. You previously asked a clarifying question "
+            f"about it; here is the user's answer: {clarification}"
+        )
 
     response = await client.messages.create(
         model=MODEL,
@@ -77,7 +90,7 @@ async def analyze_photo(image_bytes: bytes, media_type: str = "image/jpeg") -> d
                         "type": "image",
                         "source": {"type": "base64", "media_type": media_type, "data": image_b64},
                     },
-                    {"type": "text", "text": "Analyze this food photo."},
+                    {"type": "text", "text": prompt_text},
                 ],
             }
         ],
