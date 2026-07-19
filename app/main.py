@@ -1,7 +1,10 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.db.migrate import run_migrations
+from app.db.pool import get_pool
 from app.whatsapp.webhook import router as webhook_router
 
 # Without this, Python defaults to WARNING — every logger.info() call in the
@@ -9,7 +12,15 @@ from app.whatsapp.webhook import router as webhook_router
 # silently invisible in production, leaving only failures ever logged.
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 
-app = FastAPI(title="AiGymBuddy")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    pool = await get_pool()
+    await run_migrations(pool)
+    yield
+
+
+app = FastAPI(title="AiGymBuddy", lifespan=lifespan)
 app.include_router(webhook_router)
 
 
