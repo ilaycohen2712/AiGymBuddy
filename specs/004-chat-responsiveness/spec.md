@@ -20,9 +20,10 @@ A user sends the bot a text message that isn't completing a pending clarifying q
 
 **Acceptance Scenarios**:
 
-1. **Given** a user has no pending clarifying question outstanding, **When** they send a free-form text message, **Then** the bot sends back a reply instead of leaving the message unanswered.
-2. **Given** a user does have a pending clarifying question outstanding, **When** they send a text message, **Then** the existing clarification-completion behavior still takes priority and is unaffected by this feature.
-3. **Given** a user sends several free-form messages in a row, **When** each one is processed, **Then** each individually receives its own reply (no messages skipped or merged).
+1. **Given** a user has no pending clarifying question outstanding, **When** they send a free-form text message matching one of the bot's recognized questions about their own data (e.g., their running total so far today, their daily calorie target), **Then** the bot answers using their actual current data rather than a placeholder.
+2. **Given** a user sends a free-form text message that doesn't match any recognized question, **When** it is processed, **Then** the bot sends back the same short fallback reply pointing them to what it can help with, rather than leaving the message unanswered.
+3. **Given** a user does have a pending clarifying question outstanding, **When** they send a text message, **Then** the existing clarification-completion behavior still takes priority and is unaffected by this feature.
+4. **Given** a user sends several free-form messages in a row, **When** each one is processed, **Then** each individually receives its own reply (no messages skipped or merged).
 
 ---
 
@@ -46,6 +47,8 @@ A user sends a message type the bot has no dedicated handling for (e.g., a voice
 - What happens if the bot receives a burst of free-form messages from the same user in quick succession? (Each is still deduplicated and replied to individually, per existing per-message dedupe behavior — no new batching introduced by this feature.)
 - What happens if generating a reply fails (e.g., an upstream error)? (Falls back to the same graceful fallback reply already used for photo/clarification failures — the user never receives silence even on error.)
 - What happens if a free-form message contains a medical or disordered-eating signal? (The existing safety-escalation behavior applies, same as any other user-facing reply.)
+- What happens when a message matches a recognized question, but the underlying data doesn't exist yet (e.g., asking for today's total before logging any meals, or a calorie target before one has been set)? (The bot answers with the true current state — e.g., a zero total, or an offer to collect a target — not an error.)
+- What happens when a message could plausibly match more than one recognized question, or only partially matches one? (Treated as not matching — the bot only answers when it's confident which recognized question is meant, and otherwise uses the generic fallback rather than guessing.)
 
 ## Requirements *(mandatory)*
 
@@ -58,7 +61,14 @@ A user sends a message type the bot has no dedicated handling for (e.g., a voice
 - **FR-005**: A free-form message containing medical or disordered-eating warning signs MUST trigger the bot's existing safety-escalation behavior rather than a routine reply.
 - **FR-006**: System MUST deduplicate and record every newly-answered message the same way inbound messages are already deduplicated and recorded today, so a redelivered webhook does not produce a duplicate reply.
 - **FR-007**: If reply generation fails for any reason, the system MUST still send the user a graceful fallback reply rather than no reply at all, consistent with existing failure handling for photo and clarification messages.
-- **FR-008**: The content of a reply to a free-form text message MUST [NEEDS CLARIFICATION: what should the bot actually say back? (a) hold an open-ended conversation on any topic within its coaching persona, using the LLM to generate a contextual answer; (b) recognize a bounded set of supported intents about the user's own data (e.g., "what's my total today", "what's my target") and answer only those, with a generic fallback otherwise; or (c) always send the same short generic acknowledgment (e.g., "Got it! Send a food photo to log a meal, or wait for your daily report.") regardless of what the user said]
+- **FR-008**: System MUST recognize a bounded, predefined set of supported questions about the user's own data (e.g., their running daily total, their daily calorie target) within a free-form text message, and answer those from the user's actual current data.
+- **FR-009**: System MUST send the same short, fixed fallback reply — describing what the bot can help with — for any free-form text message that does not match a recognized supported question, rather than attempting to interpret or answer arbitrary open-ended topics.
+- **FR-010**: System MUST answer a recognized supported question using the user's true current state (including "no data yet," e.g., a zero running total) rather than a generic placeholder.
+- **FR-011**: The set of supported questions MUST only cover data the bot already tracks elsewhere in the product (e.g., running daily totals, daily calorie target); this feature does not introduce new data collection on its own.
+
+### Key Entities *(include if feature involves data)*
+
+- **Supported Question**: A recognized category of free-form question the bot can answer directly from a user's existing data (e.g., "what's my total today," "what's my calorie target"). Each maps to data already tracked by another feature; the bot answers only questions it recognizes and falls back to a generic reply otherwise.
 
 ## Success Criteria *(mandatory)*
 
@@ -69,6 +79,8 @@ A user sends a message type the bot has no dedicated handling for (e.g., a voice
 - **SC-003**: A reply to a free-form message arrives within the same response time users already experience for a meal-photo reply, with no perceptible added delay.
 - **SC-004**: 0% of replies generated under this feature contain medical advice or crash-diet language, matching the existing safety bar for all other bot replies.
 - **SC-005**: An existing pending clarifying question or daily-target request is still resolved correctly 100% of the time after this feature ships — no regression to that already-working flow.
+- **SC-006**: 100% of messages matching a recognized supported question are answered using the user's real current data, not a placeholder or example value.
+- **SC-007**: 100% of messages that don't match a recognized supported question receive the same fixed fallback reply — the bot never attempts to improvise an answer to an unrecognized question.
 
 ## Assumptions
 
@@ -76,3 +88,5 @@ A user sends a message type the bot has no dedicated handling for (e.g., a voice
 - This feature reuses the existing WhatsApp send/mark-as-read plumbing; no new outbound channel work is needed.
 - Standard WhatsApp messaging-window rules (e.g., the 24-hour customer service window) already govern when a reply can be sent and are unchanged by this feature.
 - This feature covers reactive replies only — it does not add any new proactive/push messaging behavior (that remains governed separately by the coach-persona push rules).
+- The exact initial list of supported questions (which pieces of a user's data can be asked about) is finalized during planning, based on what data is already available from shipped features at that time; this spec establishes the bounded-intent approach and the fallback behavior, not the literal list.
+- Matching a free-form message to a supported question only needs to handle reasonably direct phrasings; broad natural-language understanding across many phrasings of the same question is a reasonable quality bar, not a requirement for exhaustive coverage of every possible wording.

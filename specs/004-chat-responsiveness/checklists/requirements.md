@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain — FR-008 asks what a free-form reply should actually say (open conversation vs. bounded intents vs. fixed acknowledgment); this changes scope, safety surface, and technical approach enough that it isn't safe to default silently
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -32,4 +32,4 @@
 ## Notes
 
 - Items marked incomplete require spec updates before `/speckit.clarify` or `/speckit.plan`
-- One [NEEDS CLARIFICATION] marker remains (FR-008); presented to the user for resolution before this checklist can be marked fully complete.
+- FR-008's clarification was resolved: replies use a bounded set of recognized supported questions about the user's own data, answered from real state, with a fixed fallback for anything unrecognized (Option B). This was threaded through User Story 1's acceptance scenarios, Edge Cases, FR-008–FR-011, a new Key Entities section, and SC-006/SC-007.
