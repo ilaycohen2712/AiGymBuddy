@@ -32,4 +32,5 @@
 ## Notes
 
 - Items marked incomplete require spec updates before `/speckit.clarify` or `/speckit.plan`
-- All items passed on first validation pass; no [NEEDS CLARIFICATION] markers were needed — the feature closely mirrors User Story 2 of the already-clarified `001-photo-calorie-tracking` spec, so its reasonable defaults (time zone from onboarding, ranges not exact numbers, exclusion of unidentified photos) carried over directly.
+- All items passed on first validation pass; no [NEEDS CLARIFICATION] markers were needed — the feature closely mirrors User Story 2 of the already-clarified `001-photo-calorie-tracking` spec, so its reasonable defaults (ranges not exact numbers, exclusion of unidentified photos) carried over directly.
+- **Revised 2026-07-21** per direct user direction: re-prioritized around the on-demand total request (now User Story 1, P1) rather than passive total maintenance, and replaced the per-user local-time-zone reset assumption with a fixed 00:00 boundary — the system does not currently track per-user time zones, so the original assumption wasn't buildable as specified. Re-validated against this checklist after the revision; all items still pass.
