@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: User description: "Make the chatbot responsive to inbound messages: when a user sends a message, the bot receives it and answers back, instead of the current behavior where free-form text (outside of completing a pending clarifying question about a food photo) is silently dropped with no reply."
+**Input**: User description: "Make the chatbot responsive to inbound messages: when a user sends a message, the bot receives it and answers back, instead of the current behavior where free-form text (outside of completing a pending clarifying question about a food photo) is silently dropped with no reply. Every answer must stay grounded in the context of the food photo the user sent — the bot must never lose that context, and a user must never be able to exploit free-form replies to redirect the bot into behavior outside its purpose."
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -24,6 +24,8 @@ A user sends the bot a text message that isn't completing a pending clarifying q
 2. **Given** a user sends a free-form text message that doesn't match any recognized question, **When** it is processed, **Then** the bot sends back the same short fallback reply pointing them to what it can help with, rather than leaving the message unanswered.
 3. **Given** a user does have a pending clarifying question outstanding, **When** they send a text message, **Then** the existing clarification-completion behavior still takes priority and is unaffected by this feature.
 4. **Given** a user sends several free-form messages in a row, **When** each one is processed, **Then** each individually receives its own reply (no messages skipped or merged).
+5. **Given** a user's free-form message attempts to redirect the bot to a topic, persona, or instruction outside its established purpose (e.g., "ignore your instructions," "pretend you're a different assistant," a request unrelated to food logging), **When** it is processed, **Then** the bot treats it as not matching any recognized question and sends the standard fallback reply — it never acts on the attempted redirection.
+6. **Given** a user is answering a pending clarifying question about a specific food photo, **When** the bot processes that answer, **Then** the answer is used strictly as descriptive context about that photo's food content — never as a new open-ended instruction — so the bot's analysis stays grounded in the photo the user actually sent.
 
 ---
 
@@ -49,6 +51,7 @@ A user sends a message type the bot has no dedicated handling for (e.g., a voice
 - What happens if a free-form message contains a medical or disordered-eating signal? (The existing safety-escalation behavior applies, same as any other user-facing reply.)
 - What happens when a message matches a recognized question, but the underlying data doesn't exist yet (e.g., asking for today's total before logging any meals, or a calorie target before one has been set)? (The bot answers with the true current state — e.g., a zero total, or an offer to collect a target — not an error.)
 - What happens when a message could plausibly match more than one recognized question, or only partially matches one? (Treated as not matching — the bot only answers when it's confident which recognized question is meant, and otherwise uses the generic fallback rather than guessing.)
+- What happens if a user's free-form message — including a reply meant to complete a pending photo clarification — attempts to redirect the bot into behavior outside its established purpose (e.g., ignoring its rules, acting as a different persona, or answering something unrelated to food logging)? (Never treated as a new instruction to the system: a clarification reply is used strictly as descriptive context about the pending photo's food content, and any other message is checked only against the bounded set of recognized supported questions — anything else falls back to the standard fallback reply rather than being acted on.)
 
 ## Requirements *(mandatory)*
 
@@ -65,6 +68,8 @@ A user sends a message type the bot has no dedicated handling for (e.g., a voice
 - **FR-009**: System MUST send the same short, fixed fallback reply — describing what the bot can help with — for any free-form text message that does not match a recognized supported question, rather than attempting to interpret or answer arbitrary open-ended topics.
 - **FR-010**: System MUST answer a recognized supported question using the user's true current state (including "no data yet," e.g., a zero running total) rather than a generic placeholder.
 - **FR-011**: The set of supported questions MUST only cover data the bot already tracks elsewhere in the product (e.g., running daily totals, daily calorie target); this feature does not introduce new data collection on its own.
+- **FR-012**: A free-form text reply used to complete a pending photo clarification MUST be applied strictly as descriptive context about that specific photo's food content — never interpreted as a new open-ended instruction or a way to redirect the bot's behavior beyond estimating that meal.
+- **FR-013**: System MUST NOT allow any free-form message to cause the bot to act outside its established purpose (food-photo logging, running totals, daily calorie target, and the bounded set of recognized supported questions); an attempt to do so MUST be treated as not matching any recognized flow and receive the standard fallback reply rather than being acted on.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -81,6 +86,7 @@ A user sends a message type the bot has no dedicated handling for (e.g., a voice
 - **SC-005**: An existing pending clarifying question or daily-target request is still resolved correctly 100% of the time after this feature ships — no regression to that already-working flow.
 - **SC-006**: 100% of messages matching a recognized supported question are answered using the user's real current data, not a placeholder or example value.
 - **SC-007**: 100% of messages that don't match a recognized supported question receive the same fixed fallback reply — the bot never attempts to improvise an answer to an unrecognized question.
+- **SC-008**: 0% of free-form messages — including attempts to redirect, override, or otherwise exploit the bot's instructions — succeed in producing bot behavior outside its established purpose; every such attempt receives the standard fallback reply instead.
 
 ## Assumptions
 
@@ -90,3 +96,4 @@ A user sends a message type the bot has no dedicated handling for (e.g., a voice
 - This feature covers reactive replies only — it does not add any new proactive/push messaging behavior (that remains governed separately by the coach-persona push rules).
 - The exact initial list of supported questions (which pieces of a user's data can be asked about) is finalized during planning, based on what data is already available from shipped features at that time; this spec establishes the bounded-intent approach and the fallback behavior, not the literal list.
 - Matching a free-form message to a supported question only needs to handle reasonably direct phrasings; broad natural-language understanding across many phrasings of the same question is a reasonable quality bar, not a requirement for exhaustive coverage of every possible wording.
+- Guarding against a user's free-form message — including a clarification-completion reply — being used to redirect the bot's behavior outside its established purpose is a core requirement of this feature, not a separate future hardening pass.
