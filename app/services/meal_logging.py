@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 
+from app.config import settings
 from app.db.queries import MealRecord, MealRepository
 
 logger = logging.getLogger(__name__)
@@ -20,13 +21,17 @@ async def log_meal_photo(
     vision_result: dict,
     repo: MealRepository,
     now: dt.datetime | None = None,
+    model_id: str | None = None,
 ) -> MealRecord:
     """Create a new meal entry, or append to an open one within the 10-minute
     grouping window (FR-014, research.md #2). The window is anchored to the
     *first* photo: appending does not extend it, so a meal always closes
     exactly 10 minutes after it started, no matter how many photos arrive in
     between. A sliding window (refreshing on every append) was tried and found
-    live to merge unrelated meals across an entire multi-hour test session."""
+    live to merge unrelated meals across an entire multi-hour test session.
+
+    `model_id`: which vision model produced `vision_result`, for live
+    traceability (FR-008, specs/003-vision-model-comparison)."""
     now = now or dt.datetime.now(dt.UTC)
     foods = vision_result["foods"]
     total_calories = vision_result["total_calories"]
@@ -34,8 +39,12 @@ async def log_meal_photo(
 
     existing = await repo.find_open_meal(user_id, now, GROUPING_WINDOW)
     if existing is not None:
-        return await repo.append_to_meal(existing, media_id, foods, total_calories, confidence)
-    return await repo.create_meal(user_id, media_id, foods, total_calories, confidence, now)
+        return await repo.append_to_meal(
+            existing, media_id, foods, total_calories, confidence, model_id
+        )
+    return await repo.create_meal(
+        user_id, media_id, foods, total_calories, confidence, now, model_id
+    )
 
 
 def format_range_reply(meal: MealRecord) -> str:
@@ -88,7 +97,9 @@ async def handle_incoming_photo(user_id: str, wa_phone: str, media_id: str) -> s
         )
         return clarifying_question
 
-    meal = await log_meal_photo(user_id, media_id, result, repo)
+    meal = await log_meal_photo(
+        user_id, media_id, result, repo, model_id=settings.live_vision_model_id
+    )
     logger.info(
         "Logged meal for %s (meal_id=%s, photos_combined=%d, total_calories=%.0f)",
         _mask(wa_phone),
@@ -134,7 +145,9 @@ async def handle_clarification_reply(user_id: str, wa_phone: str, text: str) -> 
     # if the model still returns one — cap the back-and-forth at one round
     # trip and log the best-effort estimate rather than risk an unbounded
     # question loop.
-    meal = await log_meal_photo(user_id, pending["media_id"], result, repo)
+    meal = await log_meal_photo(
+        user_id, pending["media_id"], result, repo, model_id=settings.live_vision_model_id
+    )
     logger.info(
         "Logged clarified meal for %s (meal_id=%s, total_calories=%.0f)",
         _mask(wa_phone),

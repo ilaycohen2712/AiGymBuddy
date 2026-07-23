@@ -16,6 +16,7 @@ class MealRecord:
     foods: list[dict] = field(default_factory=list)
     total_calories: float = 0.0
     confidence: float | None = None
+    model_id: str | None = None
 
 
 def _combine_confidence(a: float | None, b: float | None) -> float | None:
@@ -43,6 +44,7 @@ class MealRepository(Protocol):
         total_calories: float,
         confidence: float | None,
         now: dt.datetime,
+        model_id: str | None = None,
     ) -> MealRecord: ...
 
     async def append_to_meal(
@@ -52,6 +54,7 @@ class MealRepository(Protocol):
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
+        model_id: str | None = None,
     ) -> MealRecord: ...
 
 
@@ -64,6 +67,7 @@ def _row_to_record(row) -> MealRecord:
         foods=json.loads(row["foods"]) if isinstance(row["foods"], str) else row["foods"],
         total_calories=float(row["total_calories"]),
         confidence=float(row["confidence"]) if row["confidence"] is not None else None,
+        model_id=row["model_id"],
     )
 
 
@@ -92,10 +96,12 @@ class AsyncpgMealRepository:
         total_calories: float,
         confidence: float | None,
         now: dt.datetime,
+        model_id: str | None = None,
     ) -> MealRecord:
         row = await self._pool.fetchrow(
             "INSERT INTO meals (user_id, logged_at, photo_media_id, photo_media_ids, foods, "
-            "total_calories, confidence) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
+            "total_calories, confidence, model_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) "
+            "RETURNING *",
             uuid.UUID(user_id),
             now,
             media_id,
@@ -103,6 +109,7 @@ class AsyncpgMealRepository:
             json.dumps(foods),
             total_calories,
             confidence,
+            model_id,
         )
         return _row_to_record(row)
 
@@ -113,6 +120,7 @@ class AsyncpgMealRepository:
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
+        model_id: str | None = None,
     ) -> MealRecord:
         # logged_at is deliberately NOT updated here: the grouping window is
         # anchored to the first photo (research.md #2 / FR-014), not sliding.
@@ -120,17 +128,21 @@ class AsyncpgMealRepository:
         # to let a meal stay "open" indefinitely as long as *any* photo arrived
         # within 10 min of the *previous* one — during an active multi-photo
         # test session this silently merged unrelated meals across over an hour.
+        # model_id: latest-write-wins, same as foods/total_calories being
+        # combined — the meal row reflects whichever model most recently
+        # contributed to it (FR-008).
         combined_media = [*meal.photo_media_ids, media_id]
         combined_foods = [*meal.foods, *foods]
         combined_total = meal.total_calories + total_calories
         combined_confidence = _combine_confidence(meal.confidence, confidence)
         row = await self._pool.fetchrow(
             "UPDATE meals SET photo_media_ids = $1, foods = $2, total_calories = $3, "
-            "confidence = $4 WHERE id = $5 RETURNING *",
+            "confidence = $4, model_id = $5 WHERE id = $6 RETURNING *",
             combined_media,
             json.dumps(combined_foods),
             combined_total,
             combined_confidence,
+            model_id,
             uuid.UUID(meal.id),
         )
         return _row_to_record(row)

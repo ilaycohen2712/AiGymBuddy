@@ -1,7 +1,9 @@
 import pytest
 
+from app.config import settings
 from app.db import queries
 from app.services import meal_logging
+from tests.fakes import InMemoryMealRepository
 
 
 @pytest.mark.asyncio
@@ -17,7 +19,9 @@ async def test_handle_incoming_photo_passes_downloaded_media_type_to_vision(monk
         async def find_open_meal(self, *args, **kwargs):
             return None
 
-        async def create_meal(self, user_id, media_id, foods, total_calories, confidence, now):
+        async def create_meal(
+            self, user_id, media_id, foods, total_calories, confidence, now, model_id=None
+        ):
             return queries.MealRecord(
                 id="meal-1",
                 user_id=user_id,
@@ -26,6 +30,7 @@ async def test_handle_incoming_photo_passes_downloaded_media_type_to_vision(monk
                 foods=foods,
                 total_calories=total_calories,
                 confidence=confidence,
+                model_id=model_id,
             )
 
     async def fake_get_pool():
@@ -153,7 +158,9 @@ async def test_clarification_reply_completes_the_analysis(monkeypatch):
         async def find_open_meal(self, *args, **kwargs):
             return None
 
-        async def create_meal(self, user_id, media_id, foods, total_calories, confidence, now):
+        async def create_meal(
+            self, user_id, media_id, foods, total_calories, confidence, now, model_id=None
+        ):
             return queries.MealRecord(
                 id="meal-clarified",
                 user_id=user_id,
@@ -162,6 +169,7 @@ async def test_clarification_reply_completes_the_analysis(monkeypatch):
                 foods=foods,
                 total_calories=total_calories,
                 confidence=confidence,
+                model_id=model_id,
             )
 
     async def fake_get_pool():
@@ -228,3 +236,68 @@ async def test_clarification_reply_returns_none_when_nothing_pending(monkeypatch
     reply = await meal_logging.handle_clarification_reply("user-1", "15551234567", "random text")
 
     assert reply is None
+
+
+@pytest.mark.asyncio
+async def test_meal_is_attributed_to_the_live_model_and_unaffected_by_other_candidates(
+    monkeypatch,
+):
+    """specs/003-vision-model-comparison User Story 3 / FR-008, FR-009: the
+    created meal's model_id must equal settings.live_vision_model_id, and
+    must be unaffected by other candidate models being registered (standing
+    in for "a comparison run in progress" — the live path never reads
+    anything about comparison state, only settings.live_vision_model_id, so
+    isolation holds regardless of how many other candidates exist).
+
+    This lives here rather than tests/contract/test_webhook_image.py because
+    that suite mocks meal_logging.handle_incoming_photo entirely and never
+    exercises a real repo.create_meal call — this is the only layer that can
+    actually observe model_id attribution."""
+    from app.db import pool as pool_module
+    from app.services import vision, vision_models
+    from app.whatsapp import media as media_client
+
+    monkeypatch.setattr(settings, "live_vision_model_id", "claude-sonnet-5")
+    monkeypatch.setitem(vision_models.MODEL_REGISTRY, "claude-opus-4-8", object())
+
+    repo = InMemoryMealRepository()
+
+    async def fake_get_pool():
+        return object()
+
+    async def fake_download_media(media_id):
+        return b"fake-bytes", "image/jpeg"
+
+    async def fake_analyze_photo(image_bytes, media_type="image/jpeg", clarification=None):
+        return {
+            "foods": [
+                {
+                    "name": "rice",
+                    "portion_grams": 200,
+                    "calories": 300,
+                    "protein_g": 5,
+                    "carbs_g": 60,
+                    "fat_g": 1,
+                }
+            ],
+            "total_calories": 300,
+            "confidence": 0.9,
+            "clarifying_question": None,
+        }
+
+    monkeypatch.setattr(pool_module, "get_pool", fake_get_pool)
+    monkeypatch.setattr(queries, "AsyncpgMealRepository", lambda pool: repo)
+    monkeypatch.setattr(media_client, "download_media", fake_download_media)
+    monkeypatch.setattr(vision, "analyze_photo", fake_analyze_photo)
+
+    await meal_logging.handle_incoming_photo("user-1", "15551234567", "media-99")
+
+    [meal] = list(repo.meals.values())
+    assert meal.model_id == "claude-sonnet-5"
+
+    monkeypatch.setattr(settings, "live_vision_model_id", "claude-opus-4-8")
+    await meal_logging.handle_incoming_photo("user-2", "15559876543", "media-100")
+
+    meals_by_user = {m.user_id: m for m in repo.meals.values()}
+    assert meals_by_user["user-2"].model_id == "claude-opus-4-8"
+    assert meals_by_user["user-1"].model_id == "claude-sonnet-5"

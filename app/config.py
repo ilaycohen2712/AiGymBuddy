@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     whatsapp_phone_number_id: str = ""
     anthropic_api_key: str = ""
     database_url: str = ""
+    live_vision_model_id: str = "claude-sonnet-5"
 
 
 settings = Settings()
