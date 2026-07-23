@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from zoneinfo import ZoneInfo
 
 from app.config import settings
 from app.db.queries import MealRecord, MealRepository
@@ -39,11 +40,52 @@ async def log_meal_photo(
 
     existing = await repo.find_open_meal(user_id, now, GROUPING_WINDOW)
     if existing is not None:
-        return await repo.append_to_meal(
+        meal = await repo.append_to_meal(
             existing, media_id, foods, total_calories, confidence, model_id
         )
-    return await repo.create_meal(
-        user_id, media_id, foods, total_calories, confidence, now, model_id
+        bucket_anchor = existing.logged_at
+    else:
+        meal = await repo.create_meal(
+            user_id, media_id, foods, total_calories, confidence, now, model_id
+        )
+        bucket_anchor = now
+
+    await _accumulate_daily_total(repo, user_id, bucket_anchor, foods, total_calories)
+    return meal
+
+
+async def _accumulate_daily_total(
+    repo: MealRepository,
+    user_id: str,
+    anchor: dt.datetime,
+    foods: list[dict],
+    total_calories: float,
+) -> None:
+    """Increments daily_totals by exactly this photo's own contribution —
+    the same delta whether it started a new meal or was appended to an open
+    one, so a combined meal is never double-counted (spec 002-daily-total-
+    tracking, FR-004). Bucketed by the local calendar date of `anchor` — the
+    meal's actual start time for an appended photo, not necessarily "now" —
+    so a photo that happens to arrive just after a user's local midnight
+    still lands in the bucket its meal actually started in (data-model.md).
+
+    KNOWN EDGE CASE (reviewer-flagged, accepted): the time zone is re-read
+    fresh on every call, not snapshotted once per meal. If a user's time
+    zone changes (User Story 4) in the narrow window between two photos of
+    the *same still-open* meal, each photo's delta could bucket into a
+    different daily_totals row for that one meal — not double-counting
+    (totals still sum correctly overall), but a rare misattribution this
+    feature's FR-014 guarantee doesn't fully cover (FR-014 only promises
+    already-*closed* meals aren't retroactively reattributed). Fixing this
+    properly would mean persisting each meal's bucket date at creation
+    (a new `meals` column), which is out of this feature's current scope."""
+    time_zone = await repo.get_time_zone(user_id)
+    local_date = anchor.astimezone(ZoneInfo(time_zone)).date()
+    protein = sum(food.get("protein_g", 0) for food in foods)
+    carbs = sum(food.get("carbs_g", 0) for food in foods)
+    fat = sum(food.get("fat_g", 0) for food in foods)
+    await repo.upsert_daily_total(
+        user_id, local_date, calories=total_calories, protein_g=protein, carbs_g=carbs, fat_g=fat
     )
 
 

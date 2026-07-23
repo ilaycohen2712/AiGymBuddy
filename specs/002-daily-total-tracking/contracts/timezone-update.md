@@ -11,7 +11,7 @@ Covers User Story 4 — keeping a user's stored time zone current as they travel
 1. Resolve/create the user (existing `get_or_create_user_id`); dedupe by `wa_message_id` (existing convention).
 2. Reverse-geocode the shared coordinates to an IANA time zone (`timezonefinder`, offline).
 3. If a valid zone is found: update `users.time_zone`; reply with a short confirmation (e.g. "Got it — set your time zone based on your location."). This is a deliberate, explicit user action, so it gets an explicit confirmation, unlike the silent text-mention path below.
-4. If reverse-geocoding fails to produce a valid zone (e.g. coordinates over open ocean): leave `users.time_zone` unchanged; reply with a brief message noting the location couldn't be used — never silently fail with no reply, consistent with this codebase's "never leave the user with silence" convention for recognized message types.
+4. If reverse-geocoding fails to produce a valid zone (only realistically an out-of-range/malformed coordinate pair — open ocean still resolves to a legitimate nautical `Etc/GMT+N` zone): leave `users.time_zone` unchanged; reply with a brief message noting the location couldn't be used — never silently fail with no reply, consistent with this codebase's "never leave the user with silence" convention for recognized message types.
 5. Record the message (existing convention).
 
 ## Trigger B: Text mentioning a place

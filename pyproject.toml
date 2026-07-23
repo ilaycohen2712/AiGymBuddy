@@ -10,6 +10,8 @@ dependencies = [
     "anthropic>=0.34",
     "asyncpg>=0.29",
     "pydantic-settings>=2.4",
+    "phonenumbers>=8.13",
+    "timezonefinder>=6.5",
 ]
 
 [project.optional-dependencies]

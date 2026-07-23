@@ -417,8 +417,16 @@ def test_text_message_ignored_when_nothing_pending(monkeypatch):
         sent["called"] = True
         return {"messages": [{"id": "wamid.reply"}]}
 
+    async def fake_extract_timezone_from_text(text):
+        return None
+
+    from app.services import timezone as timezone_service
+
     monkeypatch.setattr(meal_logging, "handle_clarification_reply", fake_handle_clarification_reply)
     monkeypatch.setattr(send, "send_text_message", fake_send_text_message)
+    monkeypatch.setattr(
+        timezone_service, "extract_timezone_from_text", fake_extract_timezone_from_text
+    )
 
     client = TestClient(app)
     body = json.dumps(
@@ -428,5 +436,248 @@ def test_text_message_ignored_when_nothing_pending(monkeypatch):
     resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
 
     assert resp.status_code == 200
+    assert sent["called"] is False
+    assert calls["recorded"] is None
+
+
+def test_total_request_replies_with_range_from_daily_totals(monkeypatch):
+    monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
+    calls = _stub_db(monkeypatch)
+
+    from app.db import queries
+    from app.services import meal_logging
+
+    async def fake_handle_clarification_reply(user_id, wa_id, text):
+        return None
+
+    async def fake_get_user_time_zone(pool, user_id):
+        return "UTC"
+
+    async def fake_get_daily_total(pool, user_id, date):
+        return {"calories": 900.0, "protein_g": 40.0, "carbs_g": 90.0, "fat_g": 20.0}
+
+    sent = {}
+
+    async def fake_send_text_message(to, body):
+        sent["body"] = body
+        return {"messages": [{"id": "wamid.reply"}]}
+
+    async def fake_extract_timezone_from_text(text):
+        return None
+
+    from app.services import timezone as timezone_service
+    from app.whatsapp import send
+
+    monkeypatch.setattr(meal_logging, "handle_clarification_reply", fake_handle_clarification_reply)
+    monkeypatch.setattr(queries, "get_user_time_zone", fake_get_user_time_zone)
+    monkeypatch.setattr(queries, "get_daily_total", fake_get_daily_total)
+    monkeypatch.setattr(
+        timezone_service, "extract_timezone_from_text", fake_extract_timezone_from_text
+    )
+    monkeypatch.setattr(send, "send_text_message", fake_send_text_message)
+
+    client = TestClient(app)
+    body = json.dumps(
+        _text_payload(body_text="what's my total today?", message_id="wamid.total1")
+    ).encode()
+
+    resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
+
+    assert resp.status_code == 200
+    assert "kcal" in sent["body"]
+    assert "720" in sent["body"]  # 900 * 0.8
+    assert "1080" in sent["body"]  # 900 * 1.2
+    assert calls["recorded"] == ("user-for-15551234567", "wamid.total1", "in", "text")
+
+
+def test_total_request_zero_meals_gets_friendly_reply(monkeypatch):
+    monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
+    _stub_db(monkeypatch)
+
+    from app.db import queries
+    from app.services import meal_logging
+
+    async def fake_handle_clarification_reply(user_id, wa_id, text):
+        return None
+
+    async def fake_get_user_time_zone(pool, user_id):
+        return "UTC"
+
+    async def fake_get_daily_total(pool, user_id, date):
+        return {"calories": 0.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0}
+
+    sent = {}
+
+    async def fake_send_text_message(to, body):
+        sent["body"] = body
+        return {"messages": [{"id": "wamid.reply"}]}
+
+    async def fake_extract_timezone_from_text(text):
+        return None
+
+    from app.services import timezone as timezone_service
+    from app.whatsapp import send
+
+    monkeypatch.setattr(meal_logging, "handle_clarification_reply", fake_handle_clarification_reply)
+    monkeypatch.setattr(queries, "get_user_time_zone", fake_get_user_time_zone)
+    monkeypatch.setattr(queries, "get_daily_total", fake_get_daily_total)
+    monkeypatch.setattr(
+        timezone_service, "extract_timezone_from_text", fake_extract_timezone_from_text
+    )
+    monkeypatch.setattr(send, "send_text_message", fake_send_text_message)
+
+    client = TestClient(app)
+    body = json.dumps(
+        _text_payload(body_text="my total?", message_id="wamid.total2")
+    ).encode()
+
+    resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
+
+    assert resp.status_code == 200
+    assert "kcal" not in sent["body"]
+
+
+def _location_payload(
+    wa_id: str = "15551234567",
+    latitude: float = 35.6895,
+    longitude: float = 139.6917,
+    message_id: str = "wamid.loc1",
+) -> dict:
+    return {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "id": message_id,
+                                    "from": wa_id,
+                                    "type": "location",
+                                    "location": {"latitude": latitude, "longitude": longitude},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+
+def test_location_message_updates_time_zone_and_confirms(monkeypatch):
+    monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
+    calls = _stub_db(monkeypatch)
+
+    from app.db import queries
+    from app.whatsapp import send
+
+    updated = {}
+
+    async def fake_update_user_time_zone(pool, user_id, time_zone):
+        updated["args"] = (user_id, time_zone)
+
+    sent = {}
+
+    async def fake_send_text_message(to, body):
+        sent["body"] = body
+        return {"messages": [{"id": "wamid.reply"}]}
+
+    monkeypatch.setattr(queries, "update_user_time_zone", fake_update_user_time_zone)
+    monkeypatch.setattr(send, "send_text_message", fake_send_text_message)
+    # Real timezonefinder call (Tokyo coordinates) — no need to mock, it's
+    # offline/deterministic, per research.md #3.
+
+    client = TestClient(app)
+    body = json.dumps(_location_payload()).encode()
+
+    resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
+
+    assert resp.status_code == 200
+    assert updated["args"] == ("user-for-15551234567", "Asia/Tokyo")
+    assert "time zone" in sent["body"].lower()
+    assert calls["recorded"] == ("user-for-15551234567", "wamid.loc1", "in", "location")
+
+
+def test_location_message_unresolvable_coordinates_leaves_time_zone_unchanged(monkeypatch):
+    monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
+    _stub_db(monkeypatch)
+
+    from app.db import queries
+    from app.whatsapp import send
+
+    called = {"update": False}
+
+    async def fake_update_user_time_zone(pool, user_id, time_zone):
+        called["update"] = True
+
+    sent = {}
+
+    async def fake_send_text_message(to, body):
+        sent["body"] = body
+        return {"messages": [{"id": "wamid.reply"}]}
+
+    monkeypatch.setattr(queries, "update_user_time_zone", fake_update_user_time_zone)
+    monkeypatch.setattr(send, "send_text_message", fake_send_text_message)
+
+    client = TestClient(app)
+    # Out-of-range latitude — a malformed payload, per timezone.py's ValueError handling.
+    body = json.dumps(
+        _location_payload(latitude=200.0, longitude=34.7818, message_id="wamid.loc2")
+    ).encode()
+
+    resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
+
+    assert resp.status_code == 200
+    assert called["update"] is False
+    assert "couldn't" in sent["body"].lower()
+
+
+def test_text_place_mention_updates_time_zone_silently(monkeypatch):
+    """spec 002-daily-total-tracking, User Story 4, Acceptance Scenario 2: a
+    place mentioned in ordinary text (not a location share, not a
+    total-request) updates the stored time zone with no dedicated reply —
+    it rides along silently."""
+    monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
+    calls = _stub_db(monkeypatch)
+
+    from app.db import queries
+    from app.services import meal_logging
+    from app.services import timezone as timezone_service
+    from app.whatsapp import send
+
+    async def fake_handle_clarification_reply(user_id, wa_id, text):
+        return None
+
+    async def fake_extract_timezone_from_text(text):
+        return "Asia/Tokyo"
+
+    updated = {}
+
+    async def fake_update_user_time_zone(pool, user_id, time_zone):
+        updated["args"] = (user_id, time_zone)
+
+    sent = {"called": False}
+
+    async def fake_send_text_message(to, body):
+        sent["called"] = True
+        return {"messages": [{"id": "wamid.reply"}]}
+
+    monkeypatch.setattr(meal_logging, "handle_clarification_reply", fake_handle_clarification_reply)
+    monkeypatch.setattr(
+        timezone_service, "extract_timezone_from_text", fake_extract_timezone_from_text
+    )
+    monkeypatch.setattr(queries, "update_user_time_zone", fake_update_user_time_zone)
+    monkeypatch.setattr(send, "send_text_message", fake_send_text_message)
+
+    client = TestClient(app)
+    body = json.dumps(
+        _text_payload(body_text="just landed in Tokyo!", message_id="wamid.place1")
+    ).encode()
+
+    resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
+
+    assert resp.status_code == 200
+    assert updated["args"] == ("user-for-15551234567", "Asia/Tokyo")
     assert sent["called"] is False
     assert calls["recorded"] is None

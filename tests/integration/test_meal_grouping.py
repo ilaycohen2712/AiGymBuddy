@@ -126,3 +126,86 @@ async def test_combined_meal_confidence_is_the_minimum_of_its_photos():
     )
 
     assert second.confidence == 0.4
+
+
+@pytest.mark.asyncio
+async def test_daily_total_accumulates_across_separate_meals_in_a_day():
+    """spec 002-daily-total-tracking, User Story 2: each successive meal
+    logged the same day increments the running total, never overwrites it."""
+    repo = InMemoryMealRepository()
+    user_id = "user-1"
+    t0 = dt.datetime(2026, 7, 16, 8, 0, tzinfo=dt.UTC)
+
+    await meal_logging.log_meal_photo(
+        user_id, "media-1", _vision_result("rice", 300), repo, now=t0
+    )
+    assert repo.daily_totals[(user_id, dt.date(2026, 7, 16))]["calories"] == 300
+
+    await meal_logging.log_meal_photo(
+        user_id, "media-2", _vision_result("salad", 150), repo, now=t0 + dt.timedelta(hours=4)
+    )
+    assert repo.daily_totals[(user_id, dt.date(2026, 7, 16))]["calories"] == 450
+
+    await meal_logging.log_meal_photo(
+        user_id, "media-3", _vision_result("chicken", 400), repo, now=t0 + dt.timedelta(hours=8)
+    )
+    assert repo.daily_totals[(user_id, dt.date(2026, 7, 16))]["calories"] == 850
+
+
+@pytest.mark.asyncio
+async def test_combined_meal_increments_daily_total_by_delta_once_not_twice():
+    """spec 002-daily-total-tracking, User Story 2, Acceptance Scenario 3:
+    two photos combined into one meal (within the existing 10-minute
+    grouping window) must increment daily_totals by the combined delta
+    exactly once — not once per photo counted against the full new meal
+    total, which would double-count the first photo's contribution."""
+    repo = InMemoryMealRepository()
+    user_id = "user-1"
+    t0 = dt.datetime(2026, 7, 16, 12, 0, tzinfo=dt.UTC)
+
+    await meal_logging.log_meal_photo(
+        user_id, "media-1", _vision_result("rice", 300), repo, now=t0
+    )
+    await meal_logging.log_meal_photo(
+        user_id, "media-2", _vision_result("chicken", 250), repo, now=t0 + dt.timedelta(minutes=5)
+    )
+
+    totals = repo.daily_totals[(user_id, dt.date(2026, 7, 16))]
+    assert totals["calories"] == 550  # 300 + 250, not 300 + 550
+
+
+@pytest.mark.asyncio
+async def test_time_zone_change_never_retroactively_reattributes_a_logged_meal():
+    """spec 002-daily-total-tracking, User Story 4, FR-014: once a meal is
+    logged, changing the user's time zone afterward (e.g. via a location
+    share while traveling) must never move that meal's contribution to a
+    different day's bucket — only meals logged after the change use the new
+    zone."""
+    repo = InMemoryMealRepository()
+    user_id = "user-1"
+    repo.time_zones[user_id] = "Etc/GMT-3"
+
+    # 20:59 UTC = 23:59 local (Etc/GMT-3) on the 16th.
+    t0 = dt.datetime(2026, 7, 16, 20, 59, tzinfo=dt.UTC)
+    await meal_logging.log_meal_photo(
+        user_id, "media-1", _vision_result("rice", 300), repo, now=t0
+    )
+    assert repo.daily_totals[(user_id, dt.date(2026, 7, 16))]["calories"] == 300
+
+    # User's time zone changes mid-day (simulating a location share/text
+    # mention update, per contracts/timezone-update.md).
+    repo.time_zones[user_id] = "Etc/GMT+5"
+
+    # The already-logged meal's bucket is untouched by the change.
+    assert repo.daily_totals[(user_id, dt.date(2026, 7, 16))]["calories"] == 300
+    assert (user_id, dt.date(2026, 7, 17)) not in repo.daily_totals
+
+    # A meal logged after the change uses the NEW zone going forward:
+    # 06:00 UTC on the 17th = 01:00 local (Etc/GMT+5, i.e. UTC-5) on the 17th.
+    t1 = dt.datetime(2026, 7, 17, 6, 0, tzinfo=dt.UTC)
+    await meal_logging.log_meal_photo(
+        user_id, "media-2", _vision_result("salad", 150), repo, now=t1
+    )
+    assert repo.daily_totals[(user_id, dt.date(2026, 7, 17))]["calories"] == 150
+    # Still exactly 300 — the second meal did not get added to the old bucket.
+    assert repo.daily_totals[(user_id, dt.date(2026, 7, 16))]["calories"] == 300

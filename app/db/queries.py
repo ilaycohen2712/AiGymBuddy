@@ -5,6 +5,7 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from typing import Protocol
+from zoneinfo import available_timezones
 
 
 @dataclass
@@ -56,6 +57,19 @@ class MealRepository(Protocol):
         confidence: float | None,
         model_id: str | None = None,
     ) -> MealRecord: ...
+
+    async def get_time_zone(self, user_id: str) -> str: ...
+
+    async def upsert_daily_total(
+        self,
+        user_id: str,
+        date: dt.date,
+        *,
+        calories: float,
+        protein_g: float,
+        carbs_g: float,
+        fat_g: float,
+    ) -> None: ...
 
 
 def _row_to_record(row) -> MealRecord:
@@ -147,13 +161,40 @@ class AsyncpgMealRepository:
         )
         return _row_to_record(row)
 
+    async def get_time_zone(self, user_id: str) -> str:
+        return await get_user_time_zone(self._pool, user_id)
+
+    async def upsert_daily_total(
+        self,
+        user_id: str,
+        date: dt.date,
+        *,
+        calories: float,
+        protein_g: float,
+        carbs_g: float,
+        fat_g: float,
+    ) -> None:
+        await upsert_daily_total(
+            self._pool,
+            user_id,
+            date,
+            calories=calories,
+            protein_g=protein_g,
+            carbs_g=carbs_g,
+            fat_g=fat_g,
+        )
+
 
 async def get_or_create_user_id(pool, wa_phone: str) -> str:
     row = await pool.fetchrow("SELECT id FROM users WHERE wa_phone = $1", wa_phone)
     if row:
         return str(row["id"])
+    from app.services.timezone import derive_default_timezone
+
     row = await pool.fetchrow(
-        "INSERT INTO users (wa_phone) VALUES ($1) RETURNING id", wa_phone
+        "INSERT INTO users (wa_phone, time_zone) VALUES ($1, $2) RETURNING id",
+        wa_phone,
+        derive_default_timezone(wa_phone),
     )
     return str(row["id"])
 
@@ -197,6 +238,74 @@ async def get_pending_clarification(pool, user_id: str) -> dict | None:
 async def clear_pending_clarification(pool, user_id: str) -> None:
     await pool.execute(
         "DELETE FROM pending_clarifications WHERE user_id = $1", uuid.UUID(user_id)
+    )
+
+
+async def get_daily_total(pool, user_id: str, date: dt.date) -> dict:
+    """The (user_id, date) row from daily_totals, or all-zero if nothing has
+    been logged for that day yet (spec 002-daily-total-tracking, FR-003)."""
+    row = await pool.fetchrow(
+        "SELECT calories_consumed, protein_g, carbs_g, fat_g FROM daily_totals "
+        "WHERE user_id = $1 AND date = $2",
+        uuid.UUID(user_id),
+        date,
+    )
+    if row is None:
+        return {"calories": 0.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0}
+    return {
+        "calories": float(row["calories_consumed"]),
+        "protein_g": float(row["protein_g"]),
+        "carbs_g": float(row["carbs_g"]),
+        "fat_g": float(row["fat_g"]),
+    }
+
+
+async def upsert_daily_total(
+    pool,
+    user_id: str,
+    date: dt.date,
+    *,
+    calories: float,
+    protein_g: float,
+    carbs_g: float,
+    fat_g: float,
+) -> None:
+    """Additively increment (never overwrite) the (user_id, date) row — the
+    caller passes only the delta being added (a whole new meal's totals, or
+    just the newly appended photo's contribution), never a recomputed grand
+    total, so this can never double-count (FR-004, data-model.md)."""
+    await pool.execute(
+        "INSERT INTO daily_totals (user_id, date, calories_consumed, protein_g, carbs_g, fat_g) "
+        "VALUES ($1, $2, $3, $4, $5, $6) "
+        "ON CONFLICT (user_id, date) DO UPDATE SET "
+        "calories_consumed = daily_totals.calories_consumed + EXCLUDED.calories_consumed, "
+        "protein_g = daily_totals.protein_g + EXCLUDED.protein_g, "
+        "carbs_g = daily_totals.carbs_g + EXCLUDED.carbs_g, "
+        "fat_g = daily_totals.fat_g + EXCLUDED.fat_g",
+        uuid.UUID(user_id),
+        date,
+        calories,
+        protein_g,
+        carbs_g,
+        fat_g,
+    )
+
+
+async def get_user_time_zone(pool, user_id: str) -> str:
+    row = await pool.fetchrow(
+        "SELECT time_zone FROM users WHERE id = $1", uuid.UUID(user_id)
+    )
+    return row["time_zone"]
+
+
+async def update_user_time_zone(pool, user_id: str, time_zone: str) -> None:
+    # Defense-in-depth: callers (timezone.py) already validate against
+    # zoneinfo before calling this, but persistence is the last line of
+    # defense for the invariant itself (data-model.md, Constitution IV).
+    if time_zone not in available_timezones():
+        raise ValueError(f"Refusing to persist invalid time zone: {time_zone!r}")
+    await pool.execute(
+        "UPDATE users SET time_zone = $1 WHERE id = $2", time_zone, uuid.UUID(user_id)
     )
 
 
