@@ -35,7 +35,7 @@ A user can text the bot asking for their running total at any time and get back 
 - **I. Accuracy honesty**: No new calorie/macro estimation happens here — this feature sums numbers `001-photo-calorie-tracking`'s vision pipeline already produced and validated. Totals are presented as ±20% ranges (FR-006), the same convention as individual meal replies. PASS.
 - **II. Push, not pull**: This feature is deliberately reactive (on-demand query), not proactive — considered and explicitly scoped out in spec Assumptions ("a separate, future feature... not a new proactive push message"). Not a violation: the constitution asks every feature to *consider* its proactive dimension, and this one did, with a documented reason to defer it. PASS (with this note, not a Complexity Tracking entry).
 - **III. Safety first**: No new diet/medical advice surface. Existing safety-escalation behavior is unaffected and untouched by this feature. PASS.
-- **IV. Schema discipline**: DB changes only via a new migration file (`0003_daily_totals_and_timezone.sql`). The Claude-based place-extraction output is schema-validated — checked against Python's `zoneinfo.available_timezones()` before ever being persisted to `users.time_zone`; anything that doesn't validate is treated as ambiguous/unrecognized (FR-013), never stored. The new extraction prompt lives in a versioned file, `app/prompts/timezone_extraction.md`, per the existing convention. PASS.
+- **IV. Schema discipline**: DB changes only via a new migration file (`0004_daily_totals_and_timezone.sql`). The Claude-based place-extraction output is schema-validated — checked against Python's `zoneinfo.available_timezones()` before ever being persisted to `users.time_zone`; anything that doesn't validate is treated as ambiguous/unrecognized (FR-013), never stored. The new extraction prompt lives in a versioned file, `app/prompts/timezone_extraction.md`, per the existing convention. PASS.
 - **V. Platform independence**: The new WhatsApp `location` message-type handling lives in `app/whatsapp/`; timezone-derivation and daily-total logic live in `app/services/`, channel-agnostic. PASS.
 - **Security requirements**: Reuses existing webhook signature verification (no change). New logging (timezone updates, total requests) masks `wa_phone` the same way existing meal-logging logs already do (`_mask` helper). No new secrets — `timezonefinder` is offline/no API key, and place-extraction reuses the existing `ANTHROPIC_API_KEY`. PASS.
 
@@ -63,7 +63,7 @@ specs/002-daily-total-tracking/
 app/
 ├── db/
 │   ├── migrations/
-│   │   └── 0003_daily_totals_and_timezone.sql   # NEW: carbs_g/fat_g on daily_totals, time_zone on users
+│   │   └── 0004_daily_totals_and_timezone.sql   # NEW: carbs_g/fat_g on daily_totals, time_zone on users
 │   └── queries.py                # NEW: get_daily_total, upsert_daily_total, get/set users.time_zone
 ├── services/
 │   ├── meal_logging.py           # CHANGED: upsert daily_totals (local-date-bucketed) on create/append

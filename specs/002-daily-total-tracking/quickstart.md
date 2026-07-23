@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Migration `0003_daily_totals_and_timezone.sql` applied (adds `daily_totals.carbs_g`/`fat_g` and `users.time_zone`).
+- Migration `0004_daily_totals_and_timezone.sql` applied (adds `daily_totals.carbs_g`/`fat_g` and `users.time_zone`).
 - `phonenumbers` and `timezonefinder` installed (new dependencies — see plan.md).
 - `ANTHROPIC_API_KEY` set (reused, no new secret) — used for the text place-mention extraction call.
 - A test WhatsApp account with no meals logged yet today.

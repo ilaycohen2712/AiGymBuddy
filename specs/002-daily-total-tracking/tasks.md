@@ -39,7 +39,7 @@ Single backend project (existing `app/` layout — see plan.md's Project Structu
 
 **⚠️ CRITICAL**: No user story task can start until this phase is complete
 
-- [ ] T002 Write migration `app/db/migrations/0003_daily_totals_and_timezone.sql`: add `carbs_g numeric NOT NULL DEFAULT 0` and `fat_g numeric NOT NULL DEFAULT 0` to `daily_totals`, and `time_zone text NOT NULL DEFAULT 'UTC'` to `users`, per data-model.md
+- [ ] T002 Write migration `app/db/migrations/0004_daily_totals_and_timezone.sql`: add `carbs_g numeric NOT NULL DEFAULT 0` and `fat_g numeric NOT NULL DEFAULT 0` to `daily_totals`, and `time_zone text NOT NULL DEFAULT 'UTC'` to `users`, per data-model.md
 - [ ] T003 [P] Implement `derive_default_timezone(wa_phone: str) -> str` in new file `app/services/timezone.py`, using `phonenumbers` to resolve a region code and a small region→IANA-zone mapping, falling back to `"UTC"` if unresolvable, per research.md #2 (depends on: T001)
 - [ ] T004 Update `get_or_create_user_id` in `app/db/queries.py` to pass a `time_zone` value derived via `derive_default_timezone` (T003) when inserting a new user (depends on: T002, T003)
 - [ ] T005 [P] Add `get_daily_total(pool, user_id, date) -> dict` and `upsert_daily_total(pool, user_id, date, *, calories, protein_g, carbs_g, fat_g) -> None` to `app/db/queries.py` — the upsert is additive via `ON CONFLICT (user_id, date) DO UPDATE SET x = daily_totals.x + EXCLUDED.x` for every numeric column, matching the `pending_clarifications` upsert style already in this file (depends on: T002)
