@@ -26,8 +26,13 @@ python -m scripts.compare_vision_models --models claude-sonnet-5,claude-opus-4-8
    for every `(model, metric)` where the manifest has ground truth
    (research.md decision #4), then sets `comparison_runs.status='completed'`.
 5. Prints a grouped, human-readable summary to stdout: for each fixture
-   photo, every requested model's calorie/macro estimate and status side by
-   side (FR-003), followed by each model's aggregate accuracy scores.
+   photo, every requested model's calorie **and macro ranges** (±20% of the
+   stored point value — same method as `meal_logging.format_range_reply`,
+   applied to calories and each macro; research.md decision #6) and status
+   side by side (FR-002, FR-003), followed by each model's aggregate
+   accuracy scores. The summary prints only these numbers and each result's
+   status — never a model's `clarifying_question` or any other free text
+   (FR-010).
 
 ## Exit codes
 
