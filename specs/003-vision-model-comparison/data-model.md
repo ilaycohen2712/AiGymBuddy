@@ -66,6 +66,14 @@ as soon as that combination is attempted.
 outcome per combination per run; re-running overwrites nothing, a fresh
 `comparison_runs` row is created for each execution.
 
+**Point value, not a range**: `total_calories`/`protein_g`/`carbs_g`/`fat_g`
+are stored as single point values, matching the same result structure used
+for live `meals` rows (FR-002's "same result structure" clause). The ±20%
+range FR-002 also asks for is a presentation-layer computation the CLI
+applies when printing results (research.md decision #6) — it is never
+persisted, so accuracy scoring (below) always compares point value to point
+ground truth, not range to point.
+
 **Validation**: A row with `status='ok'` MUST have `foods`, `total_calories`,
 and `confidence` populated (schema discipline, Constitution IV — this is the
 DB-level mirror of the code-level schema validation already applied before

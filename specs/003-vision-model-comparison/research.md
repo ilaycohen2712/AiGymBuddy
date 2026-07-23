@@ -112,7 +112,39 @@ compared — no behavioral drift between the two call sites.
   rejected — doesn't scale past two models and mixes live-serving and
   research-comparison concerns in one function.
 
-## 6. Where does a team member trigger and review a comparison run?
+## 6. How does comparison output satisfy FR-002's "range" requirement given point-valued storage?
+
+**Decision**: `model_results` stores point values (decision #5's rationale:
+"same result structure" = the calorie-estimation schema, which is itself
+point-valued). The comparison CLI's printed summary (contracts/
+compare_vision_models_cli.md) applies the same ±20% method
+`app/services/meal_logging.py::format_range_reply` uses for calories to
+**both** calories and each macro for every model/photo shown, computed at
+print time from the stored point values — never persisted as a range.
+
+**Rationale**: FR-002 explicitly asks for "an estimated calorie range and
+macro ranges... using the same result structure already used for live bot
+estimates." Read literally this is two things at once: the *storage*
+structure (point-valued, matching live estimates — decision #5) and the
+*range* a reviewer sees (matching how live users perceive uncertainty,
+Constitution I). Today's live reply only ranges calories, not macros
+(`format_range_reply` prints macros as bare point sums) — but that's a
+brevity choice for a WhatsApp reply, not a signal that macro uncertainty
+doesn't matter; a research comparison explicitly built to judge macro
+accuracy needs macro uncertainty bounds too. Applying the same ±20% method
+to macros in the comparison summary satisfies FR-002 without changing the
+live reply format or the stored schema.
+
+**Alternatives considered**:
+- *Store ranges in `model_results` directly*: rejected — duplicates
+  information that's fully derivable from the point value, and diverges
+  from the "same result structure as live estimates" the spec calls for.
+- *Only range calories, leave macros as bare numbers (mirror the live reply
+  exactly)*: rejected — doesn't satisfy FR-002's explicit "macro ranges"
+  language, and defeats User Story 2's need to see macro-specific
+  disagreement between models.
+
+## 7. Where does a team member trigger and review a comparison run?
 
 **Decision**: A CLI script, `scripts/compare_vision_models.py`, run manually
 (`python -m scripts.compare_vision_models --models sonnet-5,opus-4-8`). It

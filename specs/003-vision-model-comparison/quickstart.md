@@ -20,7 +20,8 @@ python -m scripts.compare_vision_models --models claude-sonnet-5,claude-opus-4-8
 ```
 
 **Expect**: stdout shows, per fixture photo, both models' calorie + macro
-estimates grouped together; a `comparison_runs` row exists with
+**ranges** (±20%, same method as the live bot's `format_range_reply`, per
+research.md decision #6) grouped together; a `comparison_runs` row exists with
 `status='completed'`; a `model_results` row exists for every
 `(model, photo)` pair.
 
