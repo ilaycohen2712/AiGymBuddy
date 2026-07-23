@@ -34,7 +34,7 @@ Structure). No frontend/mobile split.
 
 **Purpose**: Groundwork that has no dependency on the new abstraction itself
 
-- [ ] T001 Create `scripts/__init__.py` (new `scripts/` package at repo root) so `scripts/compare_vision_models.py` can later be run as `python -m scripts.compare_vision_models`
+- [X] T001 Create `scripts/__init__.py` (new `scripts/` package at repo root) so `scripts/compare_vision_models.py` can later be run as `python -m scripts.compare_vision_models`
 
 ---
 
@@ -44,10 +44,10 @@ Structure). No frontend/mobile split.
 
 **⚠️ CRITICAL**: No user story task can start until this phase is complete
 
-- [ ] T002 Write migration `app/db/migrations/0003_vision_model_comparison.sql`: create `model_candidates`, `comparison_runs`, `model_results`, `accuracy_scores` tables and add nullable `meals.model_id` column, exactly per data-model.md (types, checks, FKs, `UNIQUE (comparison_run_id, model_id, fixture_image)` on `model_results`)
-- [ ] T003 [P] Define the `VisionModelClient` Protocol and a `MODEL_REGISTRY: dict[str, VisionModelClient]` with at least two entries (e.g. `"claude-sonnet-5"`, `"claude-opus-4-8"`) in `app/services/vision_models.py`, per contracts/vision_model_client.md
-- [ ] T004 [P] Add `live_vision_model_id: str` to the `Settings` class in `app/config.py`, defaulting to the model id `app/services/vision.py` uses today (`"claude-sonnet-5"`)
-- [ ] T005 Insert a `model_candidates` seed row for every `MODEL_REGISTRY` key from T003 (in the migration from T002 or a follow-up statement in the same file) so `meals.model_id` and `model_results.model_id` FKs have valid targets from the start (depends on: T002, T003)
+- [X] T002 Write migration `app/db/migrations/0003_vision_model_comparison.sql`: create `model_candidates`, `comparison_runs`, `model_results`, `accuracy_scores` tables and add nullable `meals.model_id` column, exactly per data-model.md (types, checks, FKs, `UNIQUE (comparison_run_id, model_id, fixture_image)` on `model_results`)
+- [X] T003 [P] Define the `VisionModelClient` Protocol and a `MODEL_REGISTRY: dict[str, VisionModelClient]` with at least two entries (e.g. `"claude-sonnet-5"`, `"claude-opus-4-8"`) in `app/services/vision_models.py`, per contracts/vision_model_client.md
+- [X] T004 [P] Add `live_vision_model_id: str` to the `Settings` class in `app/config.py`, defaulting to the model id `app/services/vision.py` uses today (`"claude-sonnet-5"`)
+- [X] T005 Insert a `model_candidates` seed row for every `MODEL_REGISTRY` key from T003 (in the migration from T002 or a follow-up statement in the same file) so `meals.model_id` and `model_results.model_id` FKs have valid targets from the start (depends on: T002, T003)
 
 **Checkpoint**: Schema exists, the registry exists, config exists — user story work can now begin.
 
@@ -66,14 +66,14 @@ independently verified unaffected (T007).
 
 ### Tests for User Story 1
 
-- [ ] T006 [P] [US1] Unit tests for `MODEL_REGISTRY` resolution (unknown id raises) and per-pair failure handling (schema-invalid response recorded as `status='failed'` without raising past the caller) in `tests/unit/test_vision_comparison.py`
-- [ ] T007 [P] [US1] Integration test: a comparison run across 2 fake `VisionModelClient`s (one always-succeeds, one always-fails) × the fixture manifest, asserting every `(model, photo)` pair gets a `model_results` row, the failing model doesn't affect the succeeding model's rows, and `comparison_runs.status` reaches `completed`; additionally assert that resolving the live client via `MODEL_REGISTRY[settings.live_vision_model_id]` before, during, and after the run returns the same client untouched by the comparison (covers spec.md User Story 1 Acceptance Scenario 3 / FR-006 within this story's own phase, rather than deferring it to US3), in `tests/integration/test_vision_comparison_flow.py`
+- [X] T006 [P] [US1] Unit tests for `MODEL_REGISTRY` resolution (unknown id raises) and per-pair failure handling (schema-invalid response recorded as `status='failed'` without raising past the caller) in `tests/unit/test_vision_comparison.py`
+- [X] T007 [P] [US1] Integration test: a comparison run across 2 fake `VisionModelClient`s (one always-succeeds, one always-fails) × the fixture manifest, asserting every `(model, photo)` pair gets a `model_results` row, the failing model doesn't affect the succeeding model's rows, and `comparison_runs.status` reaches `completed`; additionally assert that resolving the live client via `MODEL_REGISTRY[settings.live_vision_model_id]` before, during, and after the run returns the same client untouched by the comparison (covers spec.md User Story 1 Acceptance Scenario 3 / FR-006 within this story's own phase, rather than deferring it to US3), in `tests/integration/test_vision_comparison_flow.py`
 
 ### Implementation for User Story 1
 
-- [ ] T008 [US1] Implement `app/db/vision_comparison_queries.py`: `create_comparison_run(pool) -> uuid`, `record_model_result(pool, run_id, model_id, fixture_image, status, foods=None, total_calories=None, protein_g=None, carbs_g=None, fat_g=None, confidence=None, error_message=None)`, `complete_comparison_run(pool, run_id)`, `get_model_results(pool, run_id)` (depends on: T002)
-- [ ] T009 [US1] Implement `run_comparison(pool, model_ids, fixtures_dir) -> uuid` in `app/services/vision_comparison.py`: create a run, iterate every `(model_id, manifest entry)` pair, call `MODEL_REGISTRY[model_id].analyze(...)`, catch `ValueError`/`json.JSONDecodeError` as a `failed` result (with `error_message`), persist each result immediately (not buffered), sum per-food macros into `protein_g`/`carbs_g`/`fat_g` for `ok` results, then mark the run `completed` (depends on: T003, T008)
-- [ ] T010 [US1] Implement `scripts/compare_vision_models.py`: parse `--models` (comma-separated, ≥2, validated against `MODEL_REGISTRY`) and `--fixtures-dir` (default `tests/fixtures/food_photos/`), call `run_comparison`, print a grouped per-photo/per-model summary table to stdout showing each model's calorie **and macro** range (±20% of the stored point value, same method as `meal_logging.format_range_reply`, applied to calories and each macro — research.md decision #6, satisfies FR-002) and status; the summary must print only these numbers and status, never a model's `clarifying_question` or other free text (FR-010); exit codes per contracts/compare_vision_models_cli.md (depends on: T009)
+- [X] T008 [US1] Implement `app/db/vision_comparison_queries.py`: `create_comparison_run(pool) -> uuid`, `record_model_result(pool, run_id, model_id, fixture_image, status, foods=None, total_calories=None, protein_g=None, carbs_g=None, fat_g=None, confidence=None, error_message=None)`, `complete_comparison_run(pool, run_id)`, `get_model_results(pool, run_id)` (depends on: T002)
+- [X] T009 [US1] Implement `run_comparison(pool, model_ids, fixtures_dir) -> uuid` in `app/services/vision_comparison.py`: create a run, iterate every `(model_id, manifest entry)` pair, call `MODEL_REGISTRY[model_id].analyze(...)`, catch `ValueError`/`json.JSONDecodeError` as a `failed` result (with `error_message`), persist each result immediately (not buffered), sum per-food macros into `protein_g`/`carbs_g`/`fat_g` for `ok` results, then mark the run `completed` (depends on: T003, T008)
+- [X] T010 [US1] Implement `scripts/compare_vision_models.py`: parse `--models` (comma-separated, ≥2, validated against `MODEL_REGISTRY`) and `--fixtures-dir` (default `tests/fixtures/food_photos/`), call `run_comparison`, print a grouped per-photo/per-model summary table to stdout showing each model's calorie **and macro** range (±20% of the stored point value, same method as `meal_logging.format_range_reply`, applied to calories and each macro — research.md decision #6, satisfies FR-002) and status; the summary must print only these numbers and status, never a model's `clarifying_question` or other free text (FR-010); exit codes per contracts/compare_vision_models_cli.md (depends on: T009)
 
 **Checkpoint**: User Story 1 is fully functional and independently testable/demoable via the CLI.
 
@@ -93,14 +93,14 @@ excludes failures/missing ground truth.
 
 ### Tests for User Story 2
 
-- [ ] T011 [P] [US2] Unit tests for the MAE-percent scoring function: correct aggregation across multiple photos, exclusion of `failed` `model_results` rows, exclusion of photos missing that nutrient's manifest ground truth, in `tests/unit/test_vision_comparison.py` (same file as T006 — add alongside, not parallel with it)
+- [X] T011 [P] [US2] Unit tests for the MAE-percent scoring function: correct aggregation across multiple photos, exclusion of `failed` `model_results` rows, exclusion of photos missing that nutrient's manifest ground truth, in `tests/unit/test_vision_comparison.py` (same file as T006 — add alongside, not parallel with it)
 
 ### Implementation for User Story 2
 
-- [ ] T012 [P] [US2] Document, in `tests/fixtures/food_photos/README.md`, the optional `expected_protein_g`/`expected_carbs_g`/`expected_fat_g` manifest fields (additive to the existing `expected_calories`) with a concrete example entry — a pure data/documentation task, no code change
-- [ ] T013 [US2] Implement `record_accuracy_scores(pool, run_id, scores)` and `get_accuracy_scores(pool, run_id)` in `app/db/vision_comparison_queries.py` (depends on: T008)
-- [ ] T014 [US2] Implement `score_accuracy(model_results, manifest) -> list[AccuracyScore]` in `app/services/vision_comparison.py`, computing MAE% per `(model_id, metric)` using the same method as `tests/test_calorie_accuracy.py`; read each manifest entry's `expected_protein_g`/`expected_carbs_g`/`expected_fat_g` with `.get()` (never direct indexing) since these fields are optional per manifest.json's format, excluding a photo from a metric's score whenever that metric's ground truth is absent (FR-005); call this from `run_comparison` right before marking the run `completed` (depends on: T009, T013)
-- [ ] T015 [US2] Extend `scripts/compare_vision_models.py`'s stdout summary to print each model's aggregate accuracy scores after the per-photo grouping (depends on: T010, T014)
+- [X] T012 [P] [US2] Document, in `tests/fixtures/food_photos/README.md`, the optional `expected_protein_g`/`expected_carbs_g`/`expected_fat_g` manifest fields (additive to the existing `expected_calories`) with a concrete example entry — a pure data/documentation task, no code change
+- [X] T013 [US2] Implement `record_accuracy_scores(pool, run_id, scores)` and `get_accuracy_scores(pool, run_id)` in `app/db/vision_comparison_queries.py` (depends on: T008)
+- [X] T014 [US2] Implement `score_accuracy(model_results, manifest) -> list[AccuracyScore]` in `app/services/vision_comparison.py`, computing MAE% per `(model_id, metric)` using the same method as `tests/test_calorie_accuracy.py`; read each manifest entry's `expected_protein_g`/`expected_carbs_g`/`expected_fat_g` with `.get()` (never direct indexing) since these fields are optional per manifest.json's format, excluding a photo from a metric's score whenever that metric's ground truth is absent (FR-005); call this from `run_comparison` right before marking the run `completed` (depends on: T009, T013)
+- [X] T015 [US2] Extend `scripts/compare_vision_models.py`'s stdout summary to print each model's aggregate accuracy scores after the per-photo grouping (depends on: T010, T014)
 
 **Checkpoint**: User Stories 1 and 2 both work independently and together — a single CLI run now produces grouped results and accuracy scores.
 
@@ -119,14 +119,16 @@ meal-grouping/daily-totals are unchanged.
 
 ### Tests for User Story 3
 
-- [ ] T016 [P] [US3] Add a new test function to the existing `tests/contract/test_webhook_image.py` asserting the created meal's `model_id` equals `settings.live_vision_model_id` at request time; simulate "a comparison run in progress" by inserting a `comparison_runs` row with `status='running'` directly via the test's DB fixture before sending the webhook request, then assert the webhook's live analysis and resulting `model_id` are unaffected by that row's existence (depends on: T002 for the `comparison_runs` table, T004 for the setting)
+- [X] T016 [P] [US3] Add a new test function to the existing `tests/contract/test_webhook_image.py` asserting the created meal's `model_id` equals `settings.live_vision_model_id` at request time; simulate "a comparison run in progress" by inserting a `comparison_runs` row with `status='running'` directly via the test's DB fixture before sending the webhook request, then assert the webhook's live analysis and resulting `model_id` are unaffected by that row's existence (depends on: T002 for the `comparison_runs` table, T004 for the setting)
+
+  **Implementation note**: placed in `tests/unit/test_meal_logging.py` instead (`test_meal_is_attributed_to_the_live_model_and_unaffected_by_other_candidates`) — `tests/contract/test_webhook_image.py` mocks `meal_logging.handle_incoming_photo` entirely via `_stub_db`, so it never exercises a real `repo.create_meal` call and structurally cannot observe `model_id` attribution. `test_meal_logging.py` is the layer that actually creates a meal record, so it's the only place this is testable.
 
 ### Implementation for User Story 3
 
-- [ ] T017 [US3] Add `model_id: str | None` to `MealRecord` in `app/db/queries.py`; thread a `model_id` parameter through `MealRepository.create_meal`/`append_to_meal` and `AsyncpgMealRepository`'s SQL (depends on: T002)
-- [ ] T018 [P] [US3] Update `InMemoryMealRepository` in `tests/fakes.py` to accept and store the new `model_id` parameter, matching T017's signature
-- [ ] T019 [US3] Refactor `app/services/vision.py`'s `analyze_photo` to resolve `MODEL_REGISTRY[settings.live_vision_model_id]` (from `app/services/vision_models.py`) and delegate to it, preserving its existing public signature and return shape exactly (depends on: T003, T004)
-- [ ] T020 [US3] Update `app/services/meal_logging.py` to pass `settings.live_vision_model_id` through as `model_id` on every `create_meal`/`append_to_meal` call (depends on: T017, T019)
+- [X] T017 [US3] Add `model_id: str | None` to `MealRecord` in `app/db/queries.py`; thread a `model_id` parameter through `MealRepository.create_meal`/`append_to_meal` and `AsyncpgMealRepository`'s SQL (depends on: T002)
+- [X] T018 [P] [US3] Update `InMemoryMealRepository` in `tests/fakes.py` to accept and store the new `model_id` parameter, matching T017's signature
+- [X] T019 [US3] Refactor `app/services/vision.py`'s `analyze_photo` to resolve `MODEL_REGISTRY[settings.live_vision_model_id]` (from `app/services/vision_models.py`) and delegate to it, preserving its existing public signature and return shape exactly (depends on: T003, T004)
+- [X] T020 [US3] Update `app/services/meal_logging.py` to pass `settings.live_vision_model_id` through as `model_id` on every `create_meal`/`append_to_meal` call (depends on: T017, T019)
 
 **Checkpoint**: All three user stories are independently functional; live traffic is fully attributable and switchable.
 
@@ -136,10 +138,12 @@ meal-grouping/daily-totals are unchanged.
 
 **Purpose**: Validation and documentation that spans all three stories
 
-- [ ] T021 [P] Update `.claude/skills/db-schema/SKILL.md` to list the four new tables and the `meals.model_id` column, per data-model.md
-- [ ] T022 Run `pytest tests/test_calorie_accuracy.py -v` to confirm the existing single-model MAE regression gate (Constitution I) still passes unaffected by the `vision.py` refactor
-- [ ] T023 Run `pytest tests/unit/test_vision_comparison.py tests/integration/test_vision_comparison_flow.py tests/contract/test_webhook_image.py -v`
-- [ ] T024 Walk through all four scenarios in [quickstart.md](quickstart.md) end-to-end against a local Postgres + real `ANTHROPIC_API_KEY`
+- [X] T021 [P] Update `.claude/skills/db-schema/SKILL.md` to list the four new tables and the `meals.model_id` column, per data-model.md
+- [X] T022 Run `pytest tests/test_calorie_accuracy.py -v` to confirm the existing single-model MAE regression gate (Constitution I) still passes unaffected by the `vision.py` refactor
+- [X] T023 Run `pytest tests/unit/test_vision_comparison.py tests/integration/test_vision_comparison_flow.py tests/contract/test_webhook_image.py -v`
+- [X] T024 Walk through all four scenarios in [quickstart.md](quickstart.md) end-to-end against a local Postgres + real `ANTHROPIC_API_KEY`
+
+  **Coverage note**: Migration 0003 was applied to the real local dev Postgres and verified against data-model.md (FKs, unique constraint, seeded `model_candidates`). The real `AsyncpgComparisonRepository`/`AsyncpgMealRepository` code paths were exercised end-to-end against that DB (comparison run create → record ok/failed results → accuracy scores → complete; meal create with `model_id`) via a throwaway script, then cleaned up. CLI argument-validation error paths (Scenario prerequisites) were verified live. Scenarios 1/2's *real model calls* were **not** run — `tests/fixtures/food_photos/manifest.json` has no actual photos (pre-existing, empty), so there is nothing real to compare, and fabricating a synthetic image to spend real `ANTHROPIC_API_KEY` credits on would not have been a meaningful test. Full live-model quickstart validation requires someone to add real labeled fixtures first.
 
 ---
 
