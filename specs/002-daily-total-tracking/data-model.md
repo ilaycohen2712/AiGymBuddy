@@ -1,6 +1,6 @@
 # Phase 1 Data Model: Daily Calorie & Macro Total Tracking
 
-All changes are additive — no existing column is altered or removed, via a new migration `app/db/migrations/0003_daily_totals_and_timezone.sql`.
+All changes are additive — no existing column is altered or removed, via a new migration `app/db/migrations/0004_daily_totals_and_timezone.sql`.
 
 ## `daily_totals` (existing table, extended)
 
