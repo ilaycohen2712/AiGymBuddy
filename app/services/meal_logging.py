@@ -103,6 +103,54 @@ def format_range_reply(meal: MealRecord) -> str:
     )
 
 
+def _format_calorie_range(calories: float) -> str:
+    """A zero-calorie item (e.g. a diet soda) is shown as a bare "0 kcal"
+    rather than the redundant-looking "0-0 kcal" a literal ±20% would
+    produce, and without the "about" hedge word a real estimate gets — there
+    is nothing uncertain about zero."""
+    if calories <= 0:
+        return "0 kcal"
+    return f"about {calories * 0.8:.0f}-{calories * 1.2:.0f} kcal"
+
+
+def format_item_and_meal_reply(item_result: dict, meal: MealRecord) -> str:
+    """When a photo is appended to an already-open meal, one message tells
+    the user both what this specific photo added and the meal's updated
+    running total — never two separate messages for one photo. Requested
+    after live testing: a photo that adds ~0 kcal to an existing meal (e.g.
+    a diet soda) previously produced a reply identical to before it was
+    sent, with no acknowledgment of that specific photo at all.
+
+    One consistent "Added X. Meal total: Y" sentence for every case (zero or
+    not), rather than two disconnected data-label-style clauses — a
+    coach-simulator pass on the first draft ("This item: X. Meal so far:
+    Y.") found that phrasing read as a receipt, not chat copy."""
+    item_range = _format_calorie_range(item_result["total_calories"])
+    meal_low = meal.total_calories * 0.8
+    meal_high = meal.total_calories * 1.2
+    protein = sum(food.get("protein_g", 0) for food in meal.foods)
+    carbs = sum(food.get("carbs_g", 0) for food in meal.foods)
+    fat = sum(food.get("fat_g", 0) for food in meal.foods)
+    return (
+        f"Added {item_range}. "
+        f"Meal total: about {meal_low:.0f}-{meal_high:.0f} kcal "
+        f"(protein ~{protein:.0f}g, carbs ~{carbs:.0f}g, fat ~{fat:.0f}g)."
+    )
+
+
+def _reply_for_logged_meal(item_result: dict, meal: MealRecord) -> str:
+    """One reply per photo, always — its shape depends on whether this photo
+    started a new meal (`format_range_reply`, unchanged) or was appended to
+    an already-open one (`format_item_and_meal_reply`, showing this photo's
+    own contribution inline with the updated running total). A meal's
+    `photo_media_ids` has exactly 1 entry after `create_meal` and 2+ after
+    any `append_to_meal` — a reliable, already-available signal for which
+    case this is, with no extra DB read needed."""
+    if len(meal.photo_media_ids) > 1:
+        return format_item_and_meal_reply(item_result, meal)
+    return format_range_reply(meal)
+
+
 async def handle_incoming_photo(user_id: str, wa_phone: str, media_id: str) -> str:
     """Webhook-facing entrypoint: `user_id` is resolved by the caller (webhook
     dispatch) so it can also be used for message-dedupe bookkeeping without
@@ -149,7 +197,7 @@ async def handle_incoming_photo(user_id: str, wa_phone: str, media_id: str) -> s
         len(meal.photo_media_ids),
         meal.total_calories,
     )
-    return format_range_reply(meal)
+    return _reply_for_logged_meal(result, meal)
 
 
 async def handle_clarification_reply(user_id: str, wa_phone: str, text: str) -> str | None:
@@ -196,7 +244,7 @@ async def handle_clarification_reply(user_id: str, wa_phone: str, text: str) -> 
         meal.id,
         meal.total_calories,
     )
-    return format_range_reply(meal)
+    return _reply_for_logged_meal(result, meal)
 
 
 def _mask(phone: str) -> str:
