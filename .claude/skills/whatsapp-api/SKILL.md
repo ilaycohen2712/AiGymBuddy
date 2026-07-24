@@ -23,4 +23,4 @@ description: Rules and knowledge for integrating with the Meta WhatsApp Business
 
 ## Errors & rate limits
 - 131047: window expired → fall back to template. 131026: user not on WhatsApp. 80007: rate limit → exponential backoff.
-- Never retry non-idempotent sends blindly; dedupe by our message UUID stored in DB.
+- Never retry non-idempotent sends blindly; dedupe by `wa_message_id` via `queries.claim_message` — **claim it atomically before any expensive work starts (an LLM call, a slow DB write), not after handling finishes.** A check-then-record-at-the-end pattern was tried first and had a confirmed-live bug: Meta redelivers on timeout, a real Claude vision call comfortably takes long enough to hit that window, and a redelivery arriving before the first attempt recorded itself got fully reprocessed — duplicate paid API calls and duplicate meal logging for one photo. Every webhook handler in `app/whatsapp/webhook.py` claims first, unconditionally, before touching any handler logic.
