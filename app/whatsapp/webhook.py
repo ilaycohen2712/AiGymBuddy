@@ -72,7 +72,7 @@ async def _dispatch_messages(payload: dict) -> None:
     """
     from app.db import queries
     from app.db.pool import get_pool
-    from app.services import daily_total, meal_logging
+    from app.services import chat_fallback, meal_logging
     from app.services import timezone as timezone_service
     from app.whatsapp import send
 
@@ -87,14 +87,16 @@ async def _dispatch_messages(payload: dict) -> None:
                     await _handle_image_message(pool, message, meal_logging, send, queries)
                 elif msg_type == "text":
                     await _handle_text_message(
-                        pool, message, meal_logging, daily_total, timezone_service, send, queries
+                        pool, message, meal_logging, chat_fallback, timezone_service, send, queries
                     )
                 elif msg_type == "location":
                     await _handle_location_message(
                         pool, message, timezone_service, send, queries
                     )
                 else:
-                    logger.info("Ignoring unsupported message type=%s", msg_type)
+                    await _handle_unsupported_message(
+                        pool, message, msg_type, chat_fallback, send, queries
+                    )
 
 
 async def _handle_image_message(pool, message: dict, meal_logging, send, queries) -> None:
@@ -137,7 +139,7 @@ async def _handle_image_message(pool, message: dict, meal_logging, send, queries
 
 
 async def _handle_text_message(
-    pool, message: dict, meal_logging, daily_total, timezone_service, send, queries
+    pool, message: dict, meal_logging, chat_fallback, timezone_service, send, queries
 ) -> None:
     message_id = message.get("id")
     wa_id = message.get("from")
@@ -155,18 +157,19 @@ async def _handle_text_message(
     try:
         reply_text = await meal_logging.handle_clarification_reply(user_id, wa_id, text_body)
         if reply_text is None:
-            # Not completing a pending clarification — check whether this is
-            # a recognized total-request instead (spec 002-daily-total-
-            # tracking, User Story 1). Independent of the clarification
-            # check, not mutually exclusive with any future intent this
-            # dispatch chain might grow.
-            reply_text = await daily_total.handle_daily_total_request(user_id, wa_id, text_body)
-            # Independently of whether a total-request matched, check for a
+            # Not completing a pending clarification (FR-002: that flow
+            # still takes priority, unaffected, and this branch is never
+            # reached while one is pending). Every other free-form text now
+            # always gets a reply — a safety escalation, a recognized
+            # supported-question answer, or the fixed fallback (spec
+            # 004-chat-responsiveness, FR-001/FR-009) — never silence.
+            reply_text = await chat_fallback.handle_free_form_text(user_id, wa_id, text_body)
+            # Independently of what chat_fallback answered, check for a
             # place mention that should update the user's stored time zone
-            # (User Story 4, FR-012). A clarification answer (the branch
-            # above) is deliberately excluded — it's descriptive context
-            # about a specific photo, not a general message about where the
-            # user is.
+            # (spec 002-daily-total-tracking User Story 4, FR-012). A
+            # clarification answer (the branch above) is deliberately
+            # excluded — it's descriptive context about a specific photo,
+            # not a general message about where the user is.
             await _maybe_update_timezone_from_text(
                 pool, queries, timezone_service, user_id, wa_id, text_body
             )
@@ -181,16 +184,6 @@ async def _handle_text_message(
     except Exception:
         logger.exception("Failed to handle text message (message_id=%s)", message_id)
         reply_text = FALLBACK_ERROR_REPLY
-
-    if handled and reply_text is None:
-        # No pending clarification and no recognized total-request for this
-        # user — nothing to do. Not an error; this bot isn't a general-
-        # purpose chat.
-        logger.info(
-            "No pending clarification or recognized request for message_id=%s, ignoring text",
-            message_id,
-        )
-        return
 
     await _send_reply_and_record(
         pool, queries, send, wa_id, user_id, message_id, "text", reply_text,
@@ -254,6 +247,40 @@ async def _handle_location_message(pool, message: dict, timezone_service, send, 
 
     await _send_reply_and_record(
         pool, queries, send, wa_id, user_id, message_id, "location", reply_text,
+        already_persisted=handled,
+    )
+
+
+async def _handle_unsupported_message(
+    pool, message: dict, msg_type: str, chat_fallback, send, queries
+) -> None:
+    """Any inbound message type this bot has no dedicated handler for
+    (voice note, sticker, document, video, etc.) — spec 004-chat-
+    responsiveness, User Story 2. The reply is fixed regardless of
+    `msg_type` (research.md #5), so unlike the other handlers this never
+    inspects the message body itself beyond the envelope fields every
+    WhatsApp message type shares."""
+    message_id = message.get("id")
+    wa_id = message.get("from")
+    if not message_id or not wa_id:
+        logger.warning("Malformed message payload (type=%s), skipping", msg_type)
+        return
+
+    user_id = await queries.get_or_create_user_id(pool, wa_id)
+    if await queries.is_message_processed(pool, message_id):
+        logger.info("Duplicate webhook delivery for message_id=%s, skipping", message_id)
+        return
+
+    handled = False
+    try:
+        reply_text = chat_fallback.acknowledge_unsupported_type()
+        handled = True
+    except Exception:
+        logger.exception("Failed to handle unsupported message (message_id=%s)", message_id)
+        reply_text = FALLBACK_ERROR_REPLY
+
+    await _send_reply_and_record(
+        pool, queries, send, wa_id, user_id, message_id, "other", reply_text,
         already_persisted=handled,
     )
 

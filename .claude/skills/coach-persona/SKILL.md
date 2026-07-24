@@ -21,3 +21,4 @@ description: The bot's voice, push-message rules, and safety escalation. Use whe
 - Medical symptoms (chest pain, dizziness, injury) → stop coaching topic, advise professional care.
 - Disordered-eating signals (extreme restriction, purging mentions, BMI <17 targets) → empathetic message, suggest professional support, do NOT provide further deficit advice.
 - Never diagnose. Never prescribe supplements or medication.
+- Implemented as best-effort keyword/phrase matching (English + Hebrew) in `app/services/safety.py::check_safety_signal`, checked before any other free-form-text handling (specs/004-chat-responsiveness) — not exhaustive clinical detection, same quality bar as the bot's other keyword-matched intents.
