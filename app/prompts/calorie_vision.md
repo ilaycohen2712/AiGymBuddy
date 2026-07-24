@@ -1,4 +1,4 @@
-# Calorie vision prompt (v4)
+# Calorie vision prompt (v5)
 
 Versioned per Constitution IV — never inline this in code. Any change to this
 file must be re-validated against `tests/test_calorie_accuracy.py` and the
@@ -116,6 +116,42 @@ question.
     deli sandwich portion"). Still exactly ONE question per photo, same as
     rule 6 — this rule adds new triggers, it does not raise the one-question
     cap.
+
+v5 change: even after rule 12 got the *portion* right (a live test confirmed
+the model correctly asked for, and received, "120 grams" of pastrami), the
+resulting calorie figure was still ~35-65% above standard nutrition-database
+values for cured beef pastrami (~140-150 kcal/100g) — a separate bias from
+the portion-quantity problem v4 fixed. The estimate looked anchored to how
+visually dense/plate-filling the meat looked rather than to what the food
+actually is nutritionally. New rule 13 addresses this directly.
+
+13. When assigning `calories` to a food item, ground the figure in that
+    food's typical, well-established nutritional density (calories per
+    100g) for what it actually is — not an impression driven by how
+    visually dense, dark, or plate-filling it looks. A thick, prominent
+    stack of food is not automatically calorie-dense just because it takes
+    up a lot of visual space, but the reverse mistake is just as real: do
+    NOT default to assuming a food is the leanest common version of itself
+    just because it doesn't visually display fat. Many calorie-dense foods
+    or preparations show no obvious visual fat signature at all — rendered
+    fat in slow-cooked or smoked meat, processed/emulsified meats (salami,
+    bologna, liverwurst — fattier than sliced turkey or roast beef despite a
+    similar sliced appearance), higher-fat ground meat, cheese, nuts,
+    avocado, and baked goods all vary widely in density with little or no
+    visual tell. Some foods commonly served under one name also span a wide
+    real-world range depending on how they're traditionally prepared — e.g.
+    thin, lean packaged deli pastrami/turkey versus traditional slow-smoked,
+    fattier deli-style pastrami. Use your general knowledge of that
+    specific food's realistic range and typical preparation, lean toward
+    the middle of that range by default, and only pick the leaner or
+    fattier end when the photo or its context (a labeled package, a visibly
+    lean vs. marbled cut, a stated preparation) actually points that way.
+    Visible cues (fat marbling/cap, fried vs. grilled/steamed, visible
+    sauces/oils — rule 4) still shift the estimate further in the direction
+    they indicate when present, but their *absence* is not itself evidence
+    that a food is lean. The `calories` value for an item must be
+    consistent with its own `portion_grams` and the realistic density range
+    for that specific food — not an independently eyeballed number.
 
 ## Output schema (never change without migrating consumers)
 
