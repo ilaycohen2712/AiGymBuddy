@@ -24,6 +24,8 @@ description: The vision pipeline that turns a food photo into calories/macros. U
 - Hidden fats (oil, butter, dressings): add 10–15% calories for restaurant-looking plates and say so.
 - Beverages in shot: ask, don't assume.
 - Dense/stacked items (deli meat, thin-sliced anything): portion-size ambiguity is a known accuracy weak spot — see rule 12.
+- Visually-dense-looking foods getting an inflated calories/100g figure, anchored on visual density rather than the food's actual nutritional profile — confirmed live even after rule 12 fixed the portion-size guess itself (a pastrami sandwich still came in ~35-65% over standard reference values for its density). Rule 13 (v5) grounds `calories` in a realistic per-100g density range for the identified food instead of a visual impression.
+- The opposite bias is just as real and specifically flagged by `prompt-tester` during v5's review: don't let "ground it in real density" collapse into "assume lean by default" — many calorie-dense foods/preparations (rendered fat in slow-cooked/smoked meat, processed meats like salami, higher-fat ground meat, cheese, nuts, avocado, baked goods) show no visible fat signature at all. Rule 13 explicitly calls this out and leans toward the middle of a food's realistic range, not its leanest variant, absent evidence either way.
 
 ## Accuracy discipline
 - Every prompt change must run `tests/test_calorie_accuracy.py` against `tests/fixtures/food_photos/` (labeled ground truth). Regression >5% MAE = reject the change. Fixture set is currently empty (`manifest.json` is `[]`) — add labeled photos there to make this test meaningful again.
