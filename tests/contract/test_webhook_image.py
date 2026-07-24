@@ -666,7 +666,7 @@ def test_clarification_answer_redirection_never_reaches_the_user(monkeypatch):
     # The critical assertion: the reply is exactly the calorie/macro range —
     # never the injected clarifying_question text, never the raw redirection
     # attempt echoed back.
-    assert sent["body"] == "That's about 176-264 kcal (protein ~6g, carbs ~30g, fat ~8g)."
+    assert sent["body"] == "Vegetable stew: ~198-242 kcal (protein ~6g, carbs ~30g, fat ~8g)."
     assert "IGNORE ALL PREVIOUS INSTRUCTIONS" not in sent["body"]
     assert "system prompt" not in sent["body"].lower()
 

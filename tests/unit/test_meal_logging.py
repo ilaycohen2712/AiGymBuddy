@@ -346,7 +346,62 @@ async def test_meal_is_attributed_to_the_live_model_and_unaffected_by_other_cand
     assert meals_by_user["user-1"].model_id == "claude-sonnet-5"
 
 
-def test_format_item_and_meal_reply_shows_item_and_running_total():
+def test_format_range_reply_breaks_down_each_ingredient():
+    """Requested (2026-07-24) after the user compared a bot reply against an
+    external nutrition reference that showed a per-ingredient breakdown
+    (feta cheese / tomatoes / olive oil, each with its own contribution)
+    rather than one opaque total. The narrower ±10% range (also requested,
+    same conversation) replaces the original ±20%."""
+    meal = queries.MealRecord(
+        id="meal-1",
+        user_id="user-1",
+        logged_at=None,
+        photo_media_ids=["media-1"],
+        foods=[
+            {"name": "feta cheese", "portion_grams": 100, "calories": 220,
+             "protein_g": 14, "carbs_g": 4, "fat_g": 18},
+            {"name": "cherry tomatoes", "portion_grams": 150, "calories": 30,
+             "protein_g": 1, "carbs_g": 6, "fat_g": 0},
+            {"name": "olive oil", "portion_grams": 14, "calories": 120,
+             "protein_g": 0, "carbs_g": 0, "fat_g": 14},
+        ],
+        total_calories=370,
+    )
+
+    reply = meal_logging.format_range_reply(meal)
+
+    assert reply == (
+        "Feta cheese: ~198-242 kcal\n"
+        "Cherry tomatoes: ~27-33 kcal\n"
+        "Olive oil: ~108-132 kcal\n"
+        "Total: ~333-407 kcal (protein ~15g, carbs ~10g, fat ~32g)."
+    )
+
+
+def test_format_range_reply_single_food_collapses_to_one_line():
+    """coach-simulator finding: showing the item and the Total on separate
+    lines with the identical number reads as mechanical repetition for a
+    single-food photo — collapse to one line instead."""
+    meal = queries.MealRecord(
+        id="meal-1",
+        user_id="user-1",
+        logged_at=None,
+        photo_media_ids=["media-1"],
+        foods=[{"name": "grilled chicken breast", "portion_grams": 150, "calories": 250,
+                "protein_g": 40, "carbs_g": 0, "fat_g": 12}],
+        total_calories=250,
+    )
+
+    reply = meal_logging.format_range_reply(meal)
+
+    assert reply == "Grilled chicken breast: ~225-275 kcal (protein ~40g, carbs ~0g, fat ~12g)."
+
+
+def test_format_item_and_meal_reply_single_item_collapses_added_line():
+    """Same collapsing logic as format_range_reply, applied to the
+    appended-photo case: a single-item photo (e.g. a zero-calorie drink)
+    gets one "X: ~Y kcal added." line, not a redundant item-line + Added-line
+    pair showing the same number twice."""
     meal = queries.MealRecord(
         id="meal-1",
         user_id="user-1",
@@ -358,31 +413,54 @@ def test_format_item_and_meal_reply_shows_item_and_running_total():
         ],
         total_calories=350,
     )
-    item_result = {"total_calories": 0, "foods": []}
+    item_result = {
+        "total_calories": 0,
+        "foods": [{"name": "diet soda", "calories": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0}],
+    }
 
     reply = meal_logging.format_item_and_meal_reply(item_result, meal)
 
     assert reply == (
-        "Added 0 kcal. Meal total: about 280-420 kcal "
-        "(protein ~18g, carbs ~11g, fat ~30g)."
+        "Diet soda: 0 kcal added.\n"
+        "Meal total: ~315-385 kcal (protein ~18g, carbs ~11g, fat ~30g)."
     )
 
 
-def test_format_item_and_meal_reply_nonzero_item_shows_its_own_range():
+def test_format_item_and_meal_reply_multi_item_photo_keeps_full_breakdown():
+    """When an appended photo itself has 2+ distinct foods, the per-item
+    breakdown is genuinely informative (not redundant with the Added line),
+    so it's kept in full — only the single-item case collapses."""
     meal = queries.MealRecord(
         id="meal-1",
         user_id="user-1",
         logged_at=None,
         photo_media_ids=["media-1", "media-2"],
-        foods=[{"name": "rice", "calories": 300, "protein_g": 5, "carbs_g": 60, "fat_g": 1,
-                "portion_grams": 200}],
+        foods=[
+            {"name": "rice", "calories": 100, "protein_g": 5, "carbs_g": 60, "fat_g": 1,
+             "portion_grams": 200},
+            {"name": "bread", "calories": 200, "protein_g": 6, "carbs_g": 35, "fat_g": 2,
+             "portion_grams": 60},
+        ],
         total_calories=300,
     )
-    item_result = {"total_calories": 200, "foods": []}
+    item_result = {
+        "total_calories": 200,
+        "foods": [
+            {"name": "bread", "calories": 150, "protein_g": 5, "carbs_g": 30, "fat_g": 1,
+             "portion_grams": 50},
+            {"name": "butter", "calories": 50, "protein_g": 0, "carbs_g": 0, "fat_g": 6,
+             "portion_grams": 7},
+        ],
+    }
 
     reply = meal_logging.format_item_and_meal_reply(item_result, meal)
 
-    assert reply.startswith("Added about 160-240 kcal. ")
+    assert reply == (
+        "Bread: ~135-165 kcal\n"
+        "Butter: ~45-55 kcal\n"
+        "Added: ~180-220 kcal\n"
+        "Meal total: ~270-330 kcal (protein ~11g, carbs ~95g, fat ~3g)."
+    )
 
 
 @pytest.mark.asyncio
@@ -435,8 +513,8 @@ async def test_second_photo_in_a_meal_gets_item_and_running_total_inline(monkeyp
     first_reply = await meal_logging.handle_incoming_photo("user-1", "15551234567", "media-1")
     second_reply = await meal_logging.handle_incoming_photo("user-1", "15551234567", "media-2")
 
-    assert first_reply == "That's about 304-456 kcal (protein ~18g, carbs ~11g, fat ~30g)."
+    assert first_reply == "Salad: ~342-418 kcal (protein ~18g, carbs ~11g, fat ~30g)."
     assert second_reply == (
-        "Added 0 kcal. Meal total: about 304-456 kcal "
-        "(protein ~18g, carbs ~11g, fat ~30g)."
+        "Diet soda: 0 kcal added.\n"
+        "Meal total: ~342-418 kcal (protein ~18g, carbs ~11g, fat ~30g)."
     )

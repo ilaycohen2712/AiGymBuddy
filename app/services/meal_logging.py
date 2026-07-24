@@ -89,60 +89,105 @@ async def _accumulate_daily_total(
     )
 
 
-def format_range_reply(meal: MealRecord) -> str:
-    """Present the meal's totals as a ±20% range, never a false-precision exact
-    number (FR-002, FR-003, FR-012)."""
-    calorie_low = meal.total_calories * 0.8
-    calorie_high = meal.total_calories * 1.2
+# ±10%, narrowed from the original ±20% at the user's explicit request
+# (2026-07-24), after comparing a bot reply against an external nutrition
+# reference that used a tighter band. Accepted trade-off, not free: a
+# tighter range is more likely to miss the true value than ±20% was, given
+# this app's own measured model MAE (13-30%+ across models/metrics — see
+# specs/003-vision-model-comparison's real accuracy-comparison runs). Still
+# a range, never a bare number, so Constitution I ("never false-precision")
+# is not violated — only how conservative the range is has changed.
+RANGE_FACTOR = 0.10
+
+
+def _range_text(calories: float) -> str:
+    """A zero-calorie item (e.g. a diet soda) is shown as a bare "0 kcal",
+    not the redundant-looking "0-0 kcal" a literal range would produce —
+    there is nothing uncertain about zero."""
+    if calories <= 0:
+        return "0 kcal"
+    low = calories * (1 - RANGE_FACTOR)
+    high = calories * (1 + RANGE_FACTOR)
+    return f"~{low:.0f}-{high:.0f} kcal"
+
+
+def _titlecase_food_name(name: str) -> str:
+    return f"{name[:1].upper()}{name[1:]}" if name else name
+
+
+def _food_lines(foods: list[dict]) -> list[str]:
+    """One line per distinct food item with its own range — requested
+    (2026-07-24) so a reply shows *how* a total was built, not just the
+    total itself, matching how the user's external reference presented a
+    calorie estimate (per-ingredient, not a single opaque number)."""
+    return [
+        f"{_titlecase_food_name(food['name'])}: {_range_text(food.get('calories', 0))}"
+        for food in foods
+    ]
+
+
+def _meal_macros(meal: MealRecord) -> tuple[float, float, float]:
     protein = sum(food.get("protein_g", 0) for food in meal.foods)
     carbs = sum(food.get("carbs_g", 0) for food in meal.foods)
     fat = sum(food.get("fat_g", 0) for food in meal.foods)
-    return (
-        f"That's about {calorie_low:.0f}-{calorie_high:.0f} kcal "
+    return protein, carbs, fat
+
+
+def format_range_reply(meal: MealRecord) -> str:
+    """Present the meal as a per-ingredient breakdown plus an overall range
+    — never a false-precision exact number (FR-002, FR-003, FR-012).
+
+    A single-food meal collapses to one line rather than showing the item
+    and the Total on separate lines with the identical number — a
+    coach-simulator pass found that redundant two-line form for the common
+    single-food-photo case read as mechanical repetition, not chat copy."""
+    protein, carbs, fat = _meal_macros(meal)
+    if len(meal.foods) == 1:
+        name = _titlecase_food_name(meal.foods[0]["name"])
+        return (
+            f"{name}: {_range_text(meal.total_calories)} "
+            f"(protein ~{protein:.0f}g, carbs ~{carbs:.0f}g, fat ~{fat:.0f}g)."
+        )
+    lines = _food_lines(meal.foods)
+    lines.append(
+        f"Total: {_range_text(meal.total_calories)} "
         f"(protein ~{protein:.0f}g, carbs ~{carbs:.0f}g, fat ~{fat:.0f}g)."
     )
-
-
-def _format_calorie_range(calories: float) -> str:
-    """A zero-calorie item (e.g. a diet soda) is shown as a bare "0 kcal"
-    rather than the redundant-looking "0-0 kcal" a literal ±20% would
-    produce, and without the "about" hedge word a real estimate gets — there
-    is nothing uncertain about zero."""
-    if calories <= 0:
-        return "0 kcal"
-    return f"about {calories * 0.8:.0f}-{calories * 1.2:.0f} kcal"
+    return "\n".join(lines)
 
 
 def format_item_and_meal_reply(item_result: dict, meal: MealRecord) -> str:
     """When a photo is appended to an already-open meal, one message tells
-    the user both what this specific photo added and the meal's updated
-    running total — never two separate messages for one photo. Requested
-    after live testing: a photo that adds ~0 kcal to an existing meal (e.g.
-    a diet soda) previously produced a reply identical to before it was
-    sent, with no acknowledgment of that specific photo at all.
+    the user this photo's own per-ingredient breakdown, what it added in
+    total, and the meal's updated running total — never two separate
+    messages for one photo. Requested after live testing: a photo that adds
+    ~0 kcal to an existing meal (e.g. a diet soda) previously produced a
+    reply identical to before it was sent, with no acknowledgment of that
+    specific photo at all.
 
-    One consistent "Added X. Meal total: Y" sentence for every case (zero or
-    not), rather than two disconnected data-label-style clauses — a
-    coach-simulator pass on the first draft ("This item: X. Meal so far:
-    Y.") found that phrasing read as a receipt, not chat copy."""
-    item_range = _format_calorie_range(item_result["total_calories"])
-    meal_low = meal.total_calories * 0.8
-    meal_high = meal.total_calories * 1.2
-    protein = sum(food.get("protein_g", 0) for food in meal.foods)
-    carbs = sum(food.get("carbs_g", 0) for food in meal.foods)
-    fat = sum(food.get("fat_g", 0) for food in meal.foods)
-    return (
-        f"Added {item_range}. "
-        f"Meal total: about {meal_low:.0f}-{meal_high:.0f} kcal "
+    A single-food photo collapses its item line and "Added:" line (same
+    coach-simulator finding as format_range_reply) into one "X: ~Y kcal
+    added." line, since they'd otherwise show the identical number twice."""
+    item_foods = item_result["foods"]
+    if len(item_foods) == 1:
+        name = _titlecase_food_name(item_foods[0]["name"])
+        lines = [f"{name}: {_range_text(item_result['total_calories'])} added."]
+    else:
+        lines = _food_lines(item_foods)
+        lines.append(f"Added: {_range_text(item_result['total_calories'])}")
+    protein, carbs, fat = _meal_macros(meal)
+    lines.append(
+        f"Meal total: {_range_text(meal.total_calories)} "
         f"(protein ~{protein:.0f}g, carbs ~{carbs:.0f}g, fat ~{fat:.0f}g)."
     )
+    return "\n".join(lines)
 
 
 def _reply_for_logged_meal(item_result: dict, meal: MealRecord) -> str:
     """One reply per photo, always — its shape depends on whether this photo
-    started a new meal (`format_range_reply`, unchanged) or was appended to
-    an already-open one (`format_item_and_meal_reply`, showing this photo's
-    own contribution inline with the updated running total). A meal's
+    started a new meal (`format_range_reply`) or was appended to an
+    already-open one (`format_item_and_meal_reply`, showing this photo's own
+    contribution inline with the updated running total). A meal's
     `photo_media_ids` has exactly 1 entry after `create_meal` and 2+ after
     any `append_to_meal` — a reliable, already-available signal for which
     case this is, with no extra DB read needed."""
