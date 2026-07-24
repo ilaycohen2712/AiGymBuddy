@@ -344,3 +344,99 @@ async def test_meal_is_attributed_to_the_live_model_and_unaffected_by_other_cand
     meals_by_user = {m.user_id: m for m in repo.meals.values()}
     assert meals_by_user["user-2"].model_id == "claude-opus-4-8"
     assert meals_by_user["user-1"].model_id == "claude-sonnet-5"
+
+
+def test_format_item_and_meal_reply_shows_item_and_running_total():
+    meal = queries.MealRecord(
+        id="meal-1",
+        user_id="user-1",
+        logged_at=None,
+        photo_media_ids=["media-1", "media-2"],
+        foods=[
+            {"name": "salad", "portion_grams": 200, "calories": 350, "protein_g": 18,
+             "carbs_g": 11, "fat_g": 30},
+        ],
+        total_calories=350,
+    )
+    item_result = {"total_calories": 0, "foods": []}
+
+    reply = meal_logging.format_item_and_meal_reply(item_result, meal)
+
+    assert reply == (
+        "Added 0 kcal. Meal total: about 280-420 kcal "
+        "(protein ~18g, carbs ~11g, fat ~30g)."
+    )
+
+
+def test_format_item_and_meal_reply_nonzero_item_shows_its_own_range():
+    meal = queries.MealRecord(
+        id="meal-1",
+        user_id="user-1",
+        logged_at=None,
+        photo_media_ids=["media-1", "media-2"],
+        foods=[{"name": "rice", "calories": 300, "protein_g": 5, "carbs_g": 60, "fat_g": 1,
+                "portion_grams": 200}],
+        total_calories=300,
+    )
+    item_result = {"total_calories": 200, "foods": []}
+
+    reply = meal_logging.format_item_and_meal_reply(item_result, meal)
+
+    assert reply.startswith("Added about 160-240 kcal. ")
+
+
+@pytest.mark.asyncio
+async def test_second_photo_in_a_meal_gets_item_and_running_total_inline(monkeypatch):
+    """Requested after live testing: sending a second photo into an already-
+    open meal (e.g. a zero-calorie drink added to a logged salad) previously
+    replied with only the updated meal total, giving no acknowledgment of
+    the just-sent photo itself. Now: the first photo of a meal still gets
+    the plain range reply; every additional photo gets both its own
+    contribution and the updated running total, inline in one message."""
+    from app.db import pool as pool_module
+    from app.services import vision
+    from app.whatsapp import media as media_client
+
+    repo = InMemoryMealRepository()
+
+    async def fake_get_pool():
+        return object()
+
+    async def fake_download_media(media_id):
+        return b"fake-bytes", "image/jpeg"
+
+    responses = iter(
+        [
+            {
+                "foods": [{"name": "salad", "portion_grams": 200, "calories": 380,
+                           "protein_g": 18, "carbs_g": 11, "fat_g": 30}],
+                "total_calories": 380,
+                "confidence": 0.8,
+                "clarifying_question": None,
+            },
+            {
+                "foods": [{"name": "diet soda", "portion_grams": 330, "calories": 0,
+                           "protein_g": 0, "carbs_g": 0, "fat_g": 0}],
+                "total_calories": 0,
+                "confidence": 0.9,
+                "clarifying_question": None,
+            },
+        ]
+    )
+
+    async def fake_analyze_photo(image_bytes, media_type="image/jpeg", clarification=None):
+        return next(responses)
+
+    monkeypatch.setattr(pool_module, "get_pool", fake_get_pool)
+    monkeypatch.setattr(queries, "AsyncpgMealRepository", lambda pool: repo)
+    monkeypatch.setattr(media_client, "download_media", fake_download_media)
+    monkeypatch.setattr(vision, "analyze_photo", fake_analyze_photo)
+
+    first_reply = await meal_logging.handle_incoming_photo("user-1", "15551234567", "media-1")
+    second_reply = await meal_logging.handle_incoming_photo("user-1", "15551234567", "media-2")
+
+    assert first_reply == "That's about 304-456 kcal (protein ~18g, carbs ~11g, fat ~30g)."
+    assert second_reply == (
+        "Added 0 kcal. Meal total: about 304-456 kcal "
+        "(protein ~18g, carbs ~11g, fat ~30g)."
+    )
