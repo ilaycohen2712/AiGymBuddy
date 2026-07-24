@@ -8,7 +8,8 @@ description: Rules and knowledge for integrating with the Meta WhatsApp Business
 ## Core concepts
 - All inbound messages arrive as webhook POSTs to our `/webhook` endpoint. Always verify `X-Hub-Signature-256` (HMAC-SHA256 of raw body with the App Secret) before processing.
 - Webhook verification handshake: GET with `hub.mode=subscribe` — echo back `hub.challenge` if `hub.verify_token` matches ours.
-- Message types we handle: `text`, `image` (food photos — fetch media via media ID → GET /{media-id} → download URL, valid 5 min), `interactive` (button/list replies), `location` (latitude/longitude, optional name/address — used to update a user's stored time zone, specs/002-daily-total-tracking).
+- Message types we handle: `text`, `image` (food photos — fetch media via media ID → GET /{media-id} → download URL, valid 5 min), `location` (latitude/longitude, optional name/address — used to update a user's stored time zone, specs/002-daily-total-tracking). Every other inbound message type (voice notes, stickers, documents, `interactive` button/list replies, etc.) gets a fixed acknowledgment reply rather than being silently dropped, recorded as `messages.kind='other'` (specs/004-chat-responsiveness, User Story 2).
+- Every free-form text message gets a reply — a recognized supported-question answer (from real data), a safety escalation, or a fixed fallback — never silence (specs/004-chat-responsiveness). A pending clarifying-question flow still takes priority when one is outstanding.
 
 ## The 24-hour customer service window
 - We may send free-form messages ONLY within 24h of the user's last inbound message.
