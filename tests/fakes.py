@@ -12,6 +12,8 @@ from app.db.vision_comparison_queries import AccuracyScore, ModelResult
 class InMemoryMealRepository:
     def __init__(self) -> None:
         self.meals: dict[str, MealRecord] = {}
+        self.time_zones: dict[str, str] = {}
+        self.daily_totals: dict[tuple[str, dt.date], dict] = {}
 
     async def find_open_meal(
         self, user_id: str, now: dt.datetime, window: dt.timedelta
@@ -67,6 +69,28 @@ class InMemoryMealRepository:
         meal.model_id = model_id
         self.meals[meal.id] = meal
         return meal
+
+    async def get_time_zone(self, user_id: str) -> str:
+        return self.time_zones.get(user_id, "UTC")
+
+    async def upsert_daily_total(
+        self,
+        user_id: str,
+        date: dt.date,
+        *,
+        calories: float,
+        protein_g: float,
+        carbs_g: float,
+        fat_g: float,
+    ) -> None:
+        key = (user_id, date)
+        totals = self.daily_totals.setdefault(
+            key, {"calories": 0.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0}
+        )
+        totals["calories"] += calories
+        totals["protein_g"] += protein_g
+        totals["carbs_g"] += carbs_g
+        totals["fat_g"] += fat_g
 
 
 class InMemoryComparisonRepository:

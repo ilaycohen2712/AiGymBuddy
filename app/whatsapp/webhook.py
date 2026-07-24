@@ -58,8 +58,9 @@ async def receive_webhook(request: Request) -> dict:
 
 async def _dispatch_messages(payload: dict) -> None:
     """Route inbound messages to their handlers. Image handling is wired in by
-    the meal-logging feature; text handling only completes an outstanding
-    clarifying question (see app/services/meal_logging.py) — this is not a
+    the meal-logging feature; text handling completes an outstanding
+    clarifying question (app/services/meal_logging.py) or a recognized
+    total-request (app/services/daily_total.py) — this is not a
     general-purpose chat.
 
     Every message is: deduped by wa_message_id (Meta redelivers webhooks on
@@ -71,7 +72,8 @@ async def _dispatch_messages(payload: dict) -> None:
     """
     from app.db import queries
     from app.db.pool import get_pool
-    from app.services import meal_logging
+    from app.services import daily_total, meal_logging
+    from app.services import timezone as timezone_service
     from app.whatsapp import send
 
     pool = await get_pool()
@@ -84,7 +86,13 @@ async def _dispatch_messages(payload: dict) -> None:
                 if msg_type == "image":
                     await _handle_image_message(pool, message, meal_logging, send, queries)
                 elif msg_type == "text":
-                    await _handle_text_message(pool, message, meal_logging, send, queries)
+                    await _handle_text_message(
+                        pool, message, meal_logging, daily_total, timezone_service, send, queries
+                    )
+                elif msg_type == "location":
+                    await _handle_location_message(
+                        pool, message, timezone_service, send, queries
+                    )
                 else:
                     logger.info("Ignoring unsupported message type=%s", msg_type)
 
@@ -128,7 +136,9 @@ async def _handle_image_message(pool, message: dict, meal_logging, send, queries
     )
 
 
-async def _handle_text_message(pool, message: dict, meal_logging, send, queries) -> None:
+async def _handle_text_message(
+    pool, message: dict, meal_logging, daily_total, timezone_service, send, queries
+) -> None:
     message_id = message.get("id")
     wa_id = message.get("from")
     text_body = (message.get("text") or {}).get("body")
@@ -144,6 +154,22 @@ async def _handle_text_message(pool, message: dict, meal_logging, send, queries)
     handled = False
     try:
         reply_text = await meal_logging.handle_clarification_reply(user_id, wa_id, text_body)
+        if reply_text is None:
+            # Not completing a pending clarification — check whether this is
+            # a recognized total-request instead (spec 002-daily-total-
+            # tracking, User Story 1). Independent of the clarification
+            # check, not mutually exclusive with any future intent this
+            # dispatch chain might grow.
+            reply_text = await daily_total.handle_daily_total_request(user_id, wa_id, text_body)
+            # Independently of whether a total-request matched, check for a
+            # place mention that should update the user's stored time zone
+            # (User Story 4, FR-012). A clarification answer (the branch
+            # above) is deliberately excluded — it's descriptive context
+            # about a specific photo, not a general message about where the
+            # user is.
+            await _maybe_update_timezone_from_text(
+                pool, queries, timezone_service, user_id, wa_id, text_body
+            )
         handled = True
     except httpx.HTTPStatusError as exc:
         logger.error(
@@ -157,16 +183,84 @@ async def _handle_text_message(pool, message: dict, meal_logging, send, queries)
         reply_text = FALLBACK_ERROR_REPLY
 
     if handled and reply_text is None:
-        # No pending clarification for this user — nothing to do. Not an
-        # error; this bot only handles text as a clarification-completion
-        # path, not general chat.
-        logger.info("No pending clarification for message_id=%s, ignoring text", message_id)
+        # No pending clarification and no recognized total-request for this
+        # user — nothing to do. Not an error; this bot isn't a general-
+        # purpose chat.
+        logger.info(
+            "No pending clarification or recognized request for message_id=%s, ignoring text",
+            message_id,
+        )
         return
 
     await _send_reply_and_record(
         pool, queries, send, wa_id, user_id, message_id, "text", reply_text,
         already_persisted=handled,
     )
+
+
+async def _maybe_update_timezone_from_text(
+    pool, queries, timezone_service, user_id: str, wa_id: str, text: str
+) -> None:
+    # Best-effort only, like _best_effort_mark_as_read: a failure here (e.g.
+    # an upstream Claude error) must never turn an otherwise-successful
+    # total-request reply into a failure — this is a side effect, not the
+    # message's primary content.
+    try:
+        time_zone = await timezone_service.extract_timezone_from_text(text)
+    except Exception:
+        logger.warning("Time zone extraction failed, leaving stored value unchanged")
+        return
+
+    if time_zone is not None:
+        await queries.update_user_time_zone(pool, user_id, time_zone)
+        logger.info(
+            "Updated time zone for %s to %s via text mention", _mask(wa_id), time_zone
+        )
+
+
+async def _handle_location_message(pool, message: dict, timezone_service, send, queries) -> None:
+    message_id = message.get("id")
+    wa_id = message.get("from")
+    location = message.get("location") or {}
+    latitude = location.get("latitude")
+    longitude = location.get("longitude")
+    if not message_id or not wa_id or latitude is None or longitude is None:
+        logger.warning("Malformed location message payload, skipping")
+        return
+
+    user_id = await queries.get_or_create_user_id(pool, wa_id)
+    if await queries.is_message_processed(pool, message_id):
+        logger.info("Duplicate webhook delivery for message_id=%s, skipping", message_id)
+        return
+
+    handled = False
+    try:
+        time_zone = timezone_service.timezone_from_location(latitude, longitude)
+        if time_zone is not None:
+            await queries.update_user_time_zone(pool, user_id, time_zone)
+            logger.info(
+                "Updated time zone for %s to %s via location share", _mask(wa_id), time_zone
+            )
+            reply_text = "Got it — updated your time zone based on your location."
+        else:
+            reply_text = (
+                "I couldn't figure out a time zone from that location — "
+                "could you try sharing it again?"
+            )
+        handled = True
+    except Exception:
+        logger.exception("Failed to handle location message (message_id=%s)", message_id)
+        reply_text = FALLBACK_ERROR_REPLY
+
+    await _send_reply_and_record(
+        pool, queries, send, wa_id, user_id, message_id, "location", reply_text,
+        already_persisted=handled,
+    )
+
+
+def _mask(phone: str) -> str:
+    """Mask a phone number for logs, keeping only the last 4 digits (Security requirement)."""
+    return f"***{phone[-4:]}" if len(phone) >= 4 else "***"
 
 
 async def _best_effort_mark_as_read(send, message_id: str) -> None:

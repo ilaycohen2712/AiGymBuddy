@@ -29,7 +29,7 @@ Single backend project (existing `app/` layout — see plan.md's Project Structu
 
 **Purpose**: Groundwork that has no dependency on the feature's own logic
 
-- [ ] T001 Add `phonenumbers` and `timezonefinder` to `pyproject.toml` dependencies
+- [X] T001 Add `phonenumbers` and `timezonefinder` to `pyproject.toml` dependencies
 
 ---
 
@@ -39,12 +39,12 @@ Single backend project (existing `app/` layout — see plan.md's Project Structu
 
 **⚠️ CRITICAL**: No user story task can start until this phase is complete
 
-- [ ] T002 Write migration `app/db/migrations/0004_daily_totals_and_timezone.sql`: add `carbs_g numeric NOT NULL DEFAULT 0` and `fat_g numeric NOT NULL DEFAULT 0` to `daily_totals`, and `time_zone text NOT NULL DEFAULT 'UTC'` to `users`, per data-model.md
-- [ ] T003 [P] Implement `derive_default_timezone(wa_phone: str) -> str` in new file `app/services/timezone.py`, using `phonenumbers` to resolve a region code and a small region→IANA-zone mapping, falling back to `"UTC"` if unresolvable, per research.md #2 (depends on: T001)
-- [ ] T004 Update `get_or_create_user_id` in `app/db/queries.py` to pass a `time_zone` value derived via `derive_default_timezone` (T003) when inserting a new user (depends on: T002, T003)
-- [ ] T005 [P] Add `get_daily_total(pool, user_id, date) -> dict` and `upsert_daily_total(pool, user_id, date, *, calories, protein_g, carbs_g, fat_g) -> None` to `app/db/queries.py` — the upsert is additive via `ON CONFLICT (user_id, date) DO UPDATE SET x = daily_totals.x + EXCLUDED.x` for every numeric column, matching the `pending_clarifications` upsert style already in this file (depends on: T002)
-- [ ] T006 [P] Add `get_user_time_zone(pool, user_id) -> str` and `update_user_time_zone(pool, user_id, time_zone: str) -> None` to `app/db/queries.py` (depends on: T002)
-- [ ] T007 Wire `daily_totals` upserts into `create_meal` and `append_to_meal` in `app/services/meal_logging.py`: resolve the user's current `time_zone` (T006), convert the meal's UTC `logged_at` to that zone to get the local calendar date, and call `upsert_daily_total` (T005) — `create_meal` upserts the new meal's full totals; `append_to_meal` upserts only the *newly added* photo's delta (never the meal's whole recomputed total), so a combined meal is never double-counted (depends on: T004, T005, T006)
+- [X] T002 Write migration `app/db/migrations/0004_daily_totals_and_timezone.sql`: add `carbs_g numeric NOT NULL DEFAULT 0` and `fat_g numeric NOT NULL DEFAULT 0` to `daily_totals`, and `time_zone text NOT NULL DEFAULT 'UTC'` to `users`, per data-model.md
+- [X] T003 [P] Implement `derive_default_timezone(wa_phone: str) -> str` in new file `app/services/timezone.py`, using `phonenumbers` to resolve a region code and a small region→IANA-zone mapping, falling back to `"UTC"` if unresolvable, per research.md #2 (depends on: T001)
+- [X] T004 Update `get_or_create_user_id` in `app/db/queries.py` to pass a `time_zone` value derived via `derive_default_timezone` (T003) when inserting a new user (depends on: T002, T003)
+- [X] T005 [P] Add `get_daily_total(pool, user_id, date) -> dict` and `upsert_daily_total(pool, user_id, date, *, calories, protein_g, carbs_g, fat_g) -> None` to `app/db/queries.py` — the upsert is additive via `ON CONFLICT (user_id, date) DO UPDATE SET x = daily_totals.x + EXCLUDED.x` for every numeric column, matching the `pending_clarifications` upsert style already in this file (depends on: T002)
+- [X] T006 [P] Add `get_user_time_zone(pool, user_id) -> str` and `update_user_time_zone(pool, user_id, time_zone: str) -> None` to `app/db/queries.py` (depends on: T002)
+- [X] T007 Wire `daily_totals` upserts into `create_meal` and `append_to_meal` in `app/services/meal_logging.py`: resolve the user's current `time_zone` (T006), convert the meal's UTC `logged_at` to that zone to get the local calendar date, and call `upsert_daily_total` (T005) — `create_meal` upserts the new meal's full totals; `append_to_meal` upserts only the *newly added* photo's delta (never the meal's whole recomputed total), so a combined meal is never double-counted (depends on: T004, T005, T006)
 
 **Checkpoint**: Meals now populate `daily_totals` correctly, bucketed by each user's current local date at the moment they're logged — every user story below can now be implemented.
 
@@ -58,16 +58,16 @@ Single backend project (existing `app/` layout — see plan.md's Project Structu
 
 ### Tests for User Story 1
 
-- [ ] T008 [P] [US1] Unit test: `_is_daily_total_request` recognizes Hebrew and English total-request phrases and rejects unrelated text, in `tests/unit/test_daily_total.py`
-- [ ] T009 [P] [US1] Unit test: `handle_daily_total_request` returns `None` without touching the DB for non-matching text, and returns a formatted reply sourced from `queries.get_daily_total` for matching text, in `tests/unit/test_daily_total.py`
-- [ ] T010 [P] [US1] Contract test: `POST /webhook` with a total-request text message replies with the correct calorie/macro range; a zero-meals-yet user gets the friendly no-meals-yet message, in `tests/contract/test_webhook_image.py`
+- [X] T008 [P] [US1] Unit test: `_is_daily_total_request` recognizes Hebrew and English total-request phrases and rejects unrelated text, in `tests/unit/test_daily_total.py`
+- [X] T009 [P] [US1] Unit test: `handle_daily_total_request` returns `None` without touching the DB for non-matching text, and returns a formatted reply sourced from `queries.get_daily_total` for matching text, in `tests/unit/test_daily_total.py`
+- [X] T010 [P] [US1] Contract test: `POST /webhook` with a total-request text message replies with the correct calorie/macro range; a zero-meals-yet user gets the friendly no-meals-yet message, in `tests/contract/test_webhook_image.py`
 
 ### Implementation for User Story 1
 
-- [ ] T011 [US1] Implement `_is_daily_total_request(text: str) -> bool` (Hebrew + English phrase list) in new file `app/services/daily_total.py`
-- [ ] T012 [US1] Implement `format_daily_total_reply(totals: dict) -> str` (±20% range, matching `format_range_reply`'s convention in `meal_logging.py`; a friendly fixed message when `calories` is zero) in `app/services/daily_total.py`
-- [ ] T013 [US1] Implement `handle_daily_total_request(user_id, wa_phone, text) -> str | None` in `app/services/daily_total.py`: short-circuits to `None` on no phrase match (T011) without calling `get_pool()`; otherwise resolves "today" via the user's stored `time_zone` (T006) and `queries.get_daily_total` (T005), returning T012's formatted reply (depends on: T005, T006, T011, T012)
-- [ ] T014 [US1] Wire `handle_daily_total_request` into `_handle_text_message` in `app/whatsapp/webhook.py`: call it when `handle_clarification_reply` returns `None`, before falling through to the existing "ignore unmatched text" behavior (depends on: T013)
+- [X] T011 [US1] Implement `_is_daily_total_request(text: str) -> bool` (Hebrew + English phrase list) in new file `app/services/daily_total.py`
+- [X] T012 [US1] Implement `format_daily_total_reply(totals: dict) -> str` (±20% range, matching `format_range_reply`'s convention in `meal_logging.py`; a friendly fixed message when `calories` is zero) in `app/services/daily_total.py`
+- [X] T013 [US1] Implement `handle_daily_total_request(user_id, wa_phone, text) -> str | None` in `app/services/daily_total.py`: short-circuits to `None` on no phrase match (T011) without calling `get_pool()`; otherwise resolves "today" via the user's stored `time_zone` (T006) and `queries.get_daily_total` (T005), returning T012's formatted reply (depends on: T005, T006, T011, T012)
+- [X] T014 [US1] Wire `handle_daily_total_request` into `_handle_text_message` in `app/whatsapp/webhook.py`: call it when `handle_clarification_reply` returns `None`, before falling through to the existing "ignore unmatched text" behavior (depends on: T013)
 
 **Checkpoint**: User Story 1 is fully functional and independently testable. This is the MVP (Setup + Foundational + US1).
 
@@ -81,9 +81,9 @@ Single backend project (existing `app/` layout — see plan.md's Project Structu
 
 Foundational's additive-upsert design (T007) already guarantees these properties by construction — this phase is primarily dedicated verification, plus closing any gap the tests surface.
 
-- [ ] T015 [P] [US2] Integration test: log three meals across a day (asking for the total after each), verify each reply reflects the cumulative sum so far, in `tests/integration/test_meal_grouping.py`
-- [ ] T016 [P] [US2] Unit test: a photo not recognized as food (the `NOT_FOOD_REPLY` path) never calls `upsert_daily_total`, in `tests/unit/test_meal_logging.py`
-- [ ] T017 [US2] Integration test: two photos combined into one meal within the existing 10-minute grouping window increment `daily_totals` by the combined delta exactly once, not twice, in `tests/integration/test_meal_grouping.py` (depends on: T007)
+- [X] T015 [P] [US2] Integration test: log three meals across a day (asking for the total after each), verify each reply reflects the cumulative sum so far, in `tests/integration/test_meal_grouping.py`
+- [X] T016 [P] [US2] Unit test: a photo not recognized as food (the `NOT_FOOD_REPLY` path) never calls `upsert_daily_total`, in `tests/unit/test_meal_logging.py`
+- [X] T017 [US2] Integration test: two photos combined into one meal within the existing 10-minute grouping window increment `daily_totals` by the combined delta exactly once, not twice, in `tests/integration/test_meal_grouping.py` (depends on: T007)
 
 **Checkpoint**: User Stories 1 and 2 both independently verified.
 
@@ -97,8 +97,8 @@ Foundational's additive-upsert design (T007) already guarantees these properties
 
 Foundational (T007) already buckets by local date at write time, and User Story 1 (T013) already resolves "today" via the user's stored time zone at query time — this phase proves the reset boundary these produce is correct, including across users in different zones.
 
-- [ ] T018 [P] [US3] Unit test: with a fixed/injected "now," a meal logged just before a user's local midnight stays in the current day's bucket, and a total request made just after that midnight reflects only the new day (zero, if nothing logged yet), in `tests/unit/test_daily_total.py`
-- [ ] T019 [P] [US3] Unit test: two users with different stored `time_zone` values — one user's midnight passing does not reset or affect the other user's current-day total, in `tests/unit/test_daily_total.py`
+- [X] T018 [P] [US3] Unit test: with a fixed/injected "now," a meal logged just before a user's local midnight stays in the current day's bucket, and a total request made just after that midnight reflects only the new day (zero, if nothing logged yet), in `tests/unit/test_daily_total.py`
+- [X] T019 [P] [US3] Unit test: two users with different stored `time_zone` values — one user's midnight passing does not reset or affect the other user's current-day total, in `tests/unit/test_daily_total.py`
 
 **Checkpoint**: User Stories 1, 2, and 3 all independently verified — the reset boundary is correct per-user.
 
@@ -112,18 +112,18 @@ Foundational (T007) already buckets by local date at write time, and User Story 
 
 ### Tests for User Story 4
 
-- [ ] T020 [P] [US4] Unit test: `extract_timezone_from_text` returns a valid IANA zone for a recognizable place mention and `None` for an ambiguous/unrecognized one (mocking the Claude call), in `tests/unit/test_timezone.py`
-- [ ] T021 [P] [US4] Unit test: `timezone_from_location` returns a valid IANA zone for real coordinates, in `tests/unit/test_timezone.py`
-- [ ] T022 [US4] Contract test: `POST /webhook` with a `location` message updates `users.time_zone` and replies with a confirmation; coordinates that don't resolve to a zone leave `time_zone` unchanged and reply explaining the location couldn't be used, in `tests/contract/test_webhook_image.py`
-- [ ] T023 [US4] Integration test: a meal logged before a time-zone update (via a location share) stays attributed to its original day's `daily_totals` bucket after the update — proves FR-014 (no retroactive reattribution), in `tests/integration/test_meal_grouping.py`
+- [X] T020 [P] [US4] Unit test: `extract_timezone_from_text` returns a valid IANA zone for a recognizable place mention and `None` for an ambiguous/unrecognized one (mocking the Claude call), in `tests/unit/test_timezone.py`
+- [X] T021 [P] [US4] Unit test: `timezone_from_location` returns a valid IANA zone for real coordinates, in `tests/unit/test_timezone.py`
+- [X] T022 [US4] Contract test: `POST /webhook` with a `location` message updates `users.time_zone` and replies with a confirmation; coordinates that don't resolve to a zone leave `time_zone` unchanged and reply explaining the location couldn't be used, in `tests/contract/test_webhook_image.py`
+- [X] T023 [US4] Integration test: a meal logged before a time-zone update (via a location share) stays attributed to its original day's `daily_totals` bucket after the update — proves FR-014 (no retroactive reattribution), in `tests/integration/test_meal_grouping.py`
 
 ### Implementation for User Story 4
 
-- [ ] T024 [P] [US4] Write `app/prompts/timezone_extraction.md`: a versioned prompt (Haiku-class model) that extracts at most one place mention from a short message and returns an IANA time zone or nothing, per research.md #4
-- [ ] T025 [US4] Implement `extract_timezone_from_text(text: str) -> str | None` in `app/services/timezone.py`: calls the Haiku-class model with T024's prompt, validates the result against `zoneinfo.available_timezones()`, returns `None` if missing or invalid (depends on: T024)
-- [ ] T026 [P] [US4] Implement `timezone_from_location(latitude: float, longitude: float) -> str | None` in `app/services/timezone.py` using `timezonefinder`, validated against `zoneinfo.available_timezones()` (depends on: T001)
-- [ ] T027 [US4] Add a `location` message-type branch (`_handle_location_message`) to `app/whatsapp/webhook.py`'s dispatch: resolve/dedupe the user (existing convention), call `timezone_from_location` (T026), update `users.time_zone` via `update_user_time_zone` (T006) and send a confirmation reply on success, or send a "couldn't use that location" reply on failure — never silent (depends on: T006, T026)
-- [ ] T028 [US4] In `_handle_text_message` in `app/whatsapp/webhook.py`, after the existing clarification and total-request checks, independently run `extract_timezone_from_text` (T025) on the message body and silently update `users.time_zone` via `update_user_time_zone` (T006) if a valid zone comes back — no dedicated reply for this path (depends on: T006, T025)
+- [X] T024 [P] [US4] Write `app/prompts/timezone_extraction.md`: a versioned prompt (Haiku-class model) that extracts at most one place mention from a short message and returns an IANA time zone or nothing, per research.md #4
+- [X] T025 [US4] Implement `extract_timezone_from_text(text: str) -> str | None` in `app/services/timezone.py`: calls the Haiku-class model with T024's prompt, validates the result against `zoneinfo.available_timezones()`, returns `None` if missing or invalid (depends on: T024)
+- [X] T026 [P] [US4] Implement `timezone_from_location(latitude: float, longitude: float) -> str | None` in `app/services/timezone.py` using `timezonefinder`, validated against `zoneinfo.available_timezones()` (depends on: T001)
+- [X] T027 [US4] Add a `location` message-type branch (`_handle_location_message`) to `app/whatsapp/webhook.py`'s dispatch: resolve/dedupe the user (existing convention), call `timezone_from_location` (T026), update `users.time_zone` via `update_user_time_zone` (T006) and send a confirmation reply on success, or send a "couldn't use that location" reply on failure — never silent (depends on: T006, T026)
+- [X] T028 [US4] In `_handle_text_message` in `app/whatsapp/webhook.py`, after the existing clarification and total-request checks, independently run `extract_timezone_from_text` (T025) on the message body and silently update `users.time_zone` via `update_user_time_zone` (T006) if a valid zone comes back — no dedicated reply for this path (depends on: T006, T025)
 
 **Checkpoint**: All four user stories independently functional.
 
@@ -133,11 +133,11 @@ Foundational (T007) already buckets by local date at write time, and User Story 
 
 **Purpose**: Improvements spanning multiple user stories
 
-- [ ] T029 [P] Update `.claude/skills/whatsapp-api/SKILL.md` to document the new `location` inbound message type
-- [ ] T030 [P] Update `.claude/skills/db-schema/SKILL.md`'s `daily_totals`/`users` rows to reflect `carbs_g`, `fat_g`, and `time_zone`
-- [ ] T031 Add structured logging (masked `wa_phone`, via the existing `_mask` helper) for total requests and time-zone updates, in `app/services/daily_total.py` and `app/services/timezone.py`
-- [ ] T032 Run all of `quickstart.md`'s validation scenarios end-to-end
-- [ ] T033 Run the `reviewer` agent before merging, since this touches the webhook and persisted user data (new message type, new columns)
+- [X] T029 [P] Update `.claude/skills/whatsapp-api/SKILL.md` to document the new `location` inbound message type
+- [X] T030 [P] Update `.claude/skills/db-schema/SKILL.md`'s `daily_totals`/`users` rows to reflect `carbs_g`, `fat_g`, and `time_zone`
+- [X] T031 Add structured logging (masked `wa_phone`, via the existing `_mask` helper) for total requests and time-zone updates, in `app/services/daily_total.py` and `app/services/timezone.py`
+- [X] T032 Run all of `quickstart.md`'s validation scenarios end-to-end
+- [X] T033 Run the `reviewer` agent before merging, since this touches the webhook and persisted user data (new message type, new columns)
 
 ---
 

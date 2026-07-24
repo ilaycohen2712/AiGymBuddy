@@ -33,6 +33,12 @@ async def test_handle_incoming_photo_passes_downloaded_media_type_to_vision(monk
                 model_id=model_id,
             )
 
+        async def get_time_zone(self, user_id):
+            return "UTC"
+
+        async def upsert_daily_total(self, *args, **kwargs):
+            pass
+
     async def fake_get_pool():
         return object()
 
@@ -172,6 +178,12 @@ async def test_clarification_reply_completes_the_analysis(monkeypatch):
                 model_id=model_id,
             )
 
+        async def get_time_zone(self, user_id):
+            return "UTC"
+
+        async def upsert_daily_total(self, *args, **kwargs):
+            pass
+
     async def fake_get_pool():
         return object()
 
@@ -218,6 +230,37 @@ async def test_clarification_reply_completes_the_analysis(monkeypatch):
     assert captured["clarification"] == "It's vegetable"
     assert cleared["called"] is True
     assert "kcal" in reply
+
+
+@pytest.mark.asyncio
+async def test_not_food_photo_never_updates_daily_total(monkeypatch):
+    """spec 002-daily-total-tracking, FR-007: a photo not recognized as food
+    must never contribute to daily_totals — it never reaches log_meal_photo
+    at all, so there's nothing to increment."""
+    from app.db import pool as pool_module
+    from app.services import vision
+    from app.whatsapp import media as media_client
+
+    repo = InMemoryMealRepository()
+
+    async def fake_get_pool():
+        return object()
+
+    async def fake_download_media(media_id):
+        return b"fake-bytes", "image/jpeg"
+
+    async def fake_analyze_photo(image_bytes, media_type="image/jpeg", clarification=None):
+        return {"foods": [], "total_calories": 0, "confidence": None, "clarifying_question": None}
+
+    monkeypatch.setattr(pool_module, "get_pool", fake_get_pool)
+    monkeypatch.setattr(queries, "AsyncpgMealRepository", lambda pool: repo)
+    monkeypatch.setattr(media_client, "download_media", fake_download_media)
+    monkeypatch.setattr(vision, "analyze_photo", fake_analyze_photo)
+
+    reply = await meal_logging.handle_incoming_photo("user-1", "15551234567", "media-99")
+
+    assert reply == meal_logging.NOT_FOOD_REPLY
+    assert repo.daily_totals == {}
 
 
 @pytest.mark.asyncio
