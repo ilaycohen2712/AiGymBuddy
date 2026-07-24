@@ -45,7 +45,14 @@ def _image_payload(
 
 def _stub_db(monkeypatch, *, already_processed: bool = False):
     """Stub out the DB layer used by webhook dispatch (pool + queries), so
-    these contract tests never touch a real Postgres instance."""
+    these contract tests never touch a real Postgres instance.
+
+    Backs `queries.claim_message` — the single atomic claim-then-process
+    call that replaced the old check-then-record-at-the-end pattern (a race
+    condition that let a slow, redelivered webhook process the same photo
+    twice, confirmed live). `already_processed=True` simulates "already
+    claimed" (a duplicate delivery); otherwise the claim succeeds and is
+    recorded into `calls["recorded"]`, same shape tests already assert on."""
     from app.db import pool as pool_module
     from app.db import queries
 
@@ -57,16 +64,15 @@ def _stub_db(monkeypatch, *, already_processed: bool = False):
     async def fake_get_or_create_user_id(pool, wa_phone):
         return f"user-for-{wa_phone}"
 
-    async def fake_is_message_processed(pool, wa_message_id):
-        return already_processed
-
-    async def fake_record_message(pool, user_id, wa_message_id, direction, kind, body=None):
-        calls["recorded"] = (user_id, wa_message_id, direction, kind)
+    async def fake_claim_message(pool, user_id, wa_message_id, kind):
+        if already_processed:
+            return False
+        calls["recorded"] = (user_id, wa_message_id, "in", kind)
+        return True
 
     monkeypatch.setattr(pool_module, "get_pool", fake_get_pool)
     monkeypatch.setattr(queries, "get_or_create_user_id", fake_get_or_create_user_id)
-    monkeypatch.setattr(queries, "is_message_processed", fake_is_message_processed)
-    monkeypatch.setattr(queries, "record_message", fake_record_message)
+    monkeypatch.setattr(queries, "claim_message", fake_claim_message)
     return calls
 
 
@@ -204,6 +210,65 @@ def test_post_webhook_duplicate_message_id_skips_reprocessing(monkeypatch):
     assert handled["called"] is False
 
 
+def test_message_is_claimed_before_the_expensive_vision_call_not_after(monkeypatch):
+    """Regression test for a real production bug: found live when the same
+    photo produced three separate replies with three different calorie
+    estimates. Root cause was a race window — the old dedupe check
+    (queries.is_message_processed) ran at the top, but the record
+    (queries.record_message) only happened at the bottom, *after* a real,
+    multi-second Claude vision call. A webhook redelivery (Meta retries on
+    timeout — very plausible for a slow call) arriving in that window saw
+    "not yet processed" a second time and reprocessed the same photo.
+
+    queries.claim_message closes this by claiming atomically, in one round
+    trip, before any expensive work starts. This test asserts that
+    structurally: claim_message must be called strictly before
+    meal_logging.handle_incoming_photo, not after."""
+    monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
+
+    from app.db import pool as pool_module
+    from app.db import queries
+    from app.services import meal_logging
+    from app.whatsapp import send
+
+    call_order = []
+
+    async def fake_get_pool():
+        return object()
+
+    async def fake_get_or_create_user_id(pool, wa_phone):
+        return f"user-for-{wa_phone}"
+
+    async def fake_claim_message(pool, user_id, wa_message_id, kind):
+        call_order.append("claim")
+        return True
+
+    async def fake_handle_incoming_photo(user_id, wa_id, media_id):
+        call_order.append("vision")
+        return "That's about 400-600 kcal (protein ~30g, carbs ~50g, fat ~15g)."
+
+    async def fake_mark_as_read(message_id):
+        return None
+
+    async def fake_send_text_message(to, body):
+        return {"messages": [{"id": "wamid.reply"}]}
+
+    monkeypatch.setattr(pool_module, "get_pool", fake_get_pool)
+    monkeypatch.setattr(queries, "get_or_create_user_id", fake_get_or_create_user_id)
+    monkeypatch.setattr(queries, "claim_message", fake_claim_message)
+    monkeypatch.setattr(meal_logging, "handle_incoming_photo", fake_handle_incoming_photo)
+    monkeypatch.setattr(send, "mark_as_read", fake_mark_as_read)
+    monkeypatch.setattr(send, "send_text_message", fake_send_text_message)
+
+    client = TestClient(app)
+    body = json.dumps(_image_payload(message_id="wamid.claim-order")).encode()
+
+    resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
+
+    assert resp.status_code == 200
+    assert call_order == ["claim", "vision"]
+
+
 def test_post_webhook_falls_back_gracefully_when_processing_fails(monkeypatch):
     monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
     _stub_db(monkeypatch)
@@ -313,10 +378,17 @@ def test_message_is_recorded_even_when_reply_send_fails_after_meal_logged(monkey
     assert calls["recorded"] == ("user-for-15551234567", "wamid.sendfails", "in", "image")
 
 
-def test_message_is_not_recorded_when_photo_handling_fails_and_send_fails(monkeypatch):
-    """Complement to the above: if nothing was persisted (handle_incoming_photo
-    itself failed), and the fallback reply also fails to send, a retry should
-    still be allowed — there's no duplicate-write risk since no meal exists yet."""
+def test_message_is_recorded_even_when_both_handling_and_send_fail(monkeypatch):
+    """The message is claimed atomically up front (queries.claim_message),
+    before handling even starts — not after it finishes — so it's recorded
+    here too, even though both handle_incoming_photo and the fallback send
+    fail. This is an intentional trade-off, not a regression: claiming late
+    (the old behavior this test used to assert — "no retry allowed") left a
+    race window where a slow, redelivered webhook could process the same
+    photo twice, confirmed live. The cost is that Meta's own retry-on-
+    failure no longer gets a fresh attempt for a genuine transient error —
+    accepted because the user already gets a reply (the fallback, sent in
+    this same request) regardless of whether Meta ever retries."""
     monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
     calls = _stub_db(monkeypatch)
 
@@ -346,7 +418,7 @@ def test_message_is_not_recorded_when_photo_handling_fails_and_send_fails(monkey
     resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
 
     assert resp.status_code == 200
-    assert calls["recorded"] is None
+    assert calls["recorded"] == ("user-for-15551234567", "wamid.bothfail", "in", "image")
 
 
 def _text_payload(

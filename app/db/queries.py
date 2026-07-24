@@ -199,14 +199,44 @@ async def get_or_create_user_id(pool, wa_phone: str) -> str:
     return str(row["id"])
 
 
-async def is_message_processed(pool, wa_message_id: str) -> bool:
-    """Dedupe guard: Meta redelivers webhooks on timeout/non-2xx, so any
-    message must be checked against `messages.wa_message_id` before
-    (re)processing it (per whatsapp-api skill's dedupe convention)."""
-    row = await pool.fetchrow(
-        "SELECT 1 FROM messages WHERE wa_message_id = $1", wa_message_id
+async def claim_message(pool, user_id: str, wa_message_id: str, kind: str) -> bool:
+    """Atomically claims `wa_message_id` as being handled, in one step,
+    *before* any expensive work (an LLM call, a DB write) starts — not
+    after it finishes. Returns True if this call actually claimed it (first
+    delivery), False if it was already claimed (a redelivered webhook, or a
+    genuine duplicate).
+
+    This replaces a previous two-step check-then-record pattern
+    (`is_message_processed` + `record_message`, called at the start and end
+    of a handler respectively) that had a real race window: Meta redelivers
+    on timeout/non-2xx, and a slow photo-analysis call (several seconds, a
+    real Claude API round trip) comfortably fits inside that window. A
+    redelivery arriving before the first attempt's `record_message` ran
+    would pass the "processed?" check a second time and get fully
+    reprocessed — duplicate paid LLM calls and duplicate meal logging,
+    confirmed live. Claiming atomically up front closes that window: the
+    `ON CONFLICT DO NOTHING` is a single round trip, so there is no gap
+    between "check" and "claim" for a second delivery to land in.
+
+    Trade-off, accepted deliberately: if handling then fails with a genuine
+    transient error (not a redelivery), the message is already claimed, so
+    Meta's own retry-on-failure won't get a fresh attempt either — the user
+    only gets whatever fallback reply the handler sends in that same
+    request. This is an acceptable cost because every handler already
+    guarantees *a* reply (a graceful fallback) on failure regardless of
+    whether Meta ever retries — there's no scenario where losing the retry
+    means the user gets silence instead of a reply, only that a transient
+    failure requires the user to resend rather than resolving invisibly."""
+    result = await pool.execute(
+        "INSERT INTO messages (user_id, direction, wa_message_id, kind) "
+        "VALUES ($1, 'in', $2, $3) ON CONFLICT (wa_message_id) DO NOTHING",
+        uuid.UUID(user_id),
+        wa_message_id,
+        kind,
     )
-    return row is not None
+    # asyncpg's execute() returns a command tag like "INSERT 0 1" (claimed)
+    # or "INSERT 0 0" (already existed, ON CONFLICT skipped it).
+    return result.endswith(" 1")
 
 
 async def set_pending_clarification(
@@ -309,15 +339,3 @@ async def update_user_time_zone(pool, user_id: str, time_zone: str) -> None:
     )
 
 
-async def record_message(
-    pool, user_id: str, wa_message_id: str, direction: str, kind: str, body: str | None = None
-) -> None:
-    await pool.execute(
-        "INSERT INTO messages (user_id, direction, wa_message_id, body, kind) "
-        "VALUES ($1, $2, $3, $4, $5) ON CONFLICT (wa_message_id) DO NOTHING",
-        uuid.UUID(user_id),
-        direction,
-        wa_message_id,
-        body,
-        kind,
-    )

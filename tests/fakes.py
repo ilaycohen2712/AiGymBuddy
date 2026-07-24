@@ -147,18 +147,3 @@ class InMemoryComparisonRepository:
 
     async def get_accuracy_scores(self, run_id: str) -> list[AccuracyScore]:
         return [s for s in self.scores if s.comparison_run_id == run_id]
-
-
-class InMemoryMessageStore:
-    """Fakes app.db.queries.is_message_processed / record_message for tests."""
-
-    def __init__(self) -> None:
-        self.processed: set[str] = set()
-
-    async def is_message_processed(self, pool, wa_message_id: str) -> bool:
-        return wa_message_id in self.processed
-
-    async def record_message(
-        self, pool, user_id, wa_message_id, direction, kind, body=None
-    ) -> None:
-        self.processed.add(wa_message_id)

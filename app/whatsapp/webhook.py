@@ -63,12 +63,13 @@ async def _dispatch_messages(payload: dict) -> None:
     total-request (app/services/daily_total.py) — this is not a
     general-purpose chat.
 
-    Every message is: deduped by wa_message_id (Meta redelivers webhooks on
-    timeout/non-2xx, and this handler is slow enough that redelivery is a
-    real risk, not theoretical), processed with a graceful fallback reply on
-    any failure (a bad photo/reply or a Claude/DB hiccup must never leave the
-    user with silence), and recorded in `messages` once handled so a retry is
-    a no-op.
+    Every message is: claimed atomically by wa_message_id *before* any
+    expensive work starts (Meta redelivers webhooks on timeout/non-2xx, and
+    this handler is slow enough — real Claude API calls — that redelivery is
+    a real risk, not theoretical; queries.claim_message closes the race
+    window a check-then-record-at-the-end pattern would leave open), and
+    processed with a graceful fallback reply on any failure (a bad photo/
+    reply or a Claude/DB hiccup must never leave the user with silence).
     """
     from app.db import queries
     from app.db.pool import get_pool
@@ -108,16 +109,14 @@ async def _handle_image_message(pool, message: dict, meal_logging, send, queries
         return
 
     user_id = await queries.get_or_create_user_id(pool, wa_id)
-    if await queries.is_message_processed(pool, message_id):
+    if not await queries.claim_message(pool, user_id, message_id, kind="image"):
         logger.info("Duplicate webhook delivery for message_id=%s, skipping", message_id)
         return
 
     await _best_effort_mark_as_read(send, message_id)
 
-    handled = False
     try:
         reply_text = await meal_logging.handle_incoming_photo(user_id, wa_id, media_id)
-        handled = True
     except httpx.HTTPStatusError as exc:
         # Deliberately not logging exc's default string form: for media
         # downloads it embeds a signed, time-limited CDN URL, which would leak
@@ -132,10 +131,7 @@ async def _handle_image_message(pool, message: dict, meal_logging, send, queries
         logger.exception("Failed to handle image message (message_id=%s)", message_id)
         reply_text = FALLBACK_ERROR_REPLY
 
-    await _send_reply_and_record(
-        pool, queries, send, wa_id, user_id, message_id, "image", reply_text,
-        already_persisted=handled,
-    )
+    await _send_reply(send, wa_id, message_id, reply_text)
 
 
 async def _handle_text_message(
@@ -149,11 +145,10 @@ async def _handle_text_message(
         return
 
     user_id = await queries.get_or_create_user_id(pool, wa_id)
-    if await queries.is_message_processed(pool, message_id):
+    if not await queries.claim_message(pool, user_id, message_id, kind="text"):
         logger.info("Duplicate webhook delivery for message_id=%s, skipping", message_id)
         return
 
-    handled = False
     try:
         reply_text = await meal_logging.handle_clarification_reply(user_id, wa_id, text_body)
         if reply_text is None:
@@ -173,7 +168,6 @@ async def _handle_text_message(
             await _maybe_update_timezone_from_text(
                 pool, queries, timezone_service, user_id, wa_id, text_body
             )
-        handled = True
     except httpx.HTTPStatusError as exc:
         logger.error(
             "Upstream API error (status=%s) handling message_id=%s",
@@ -185,10 +179,7 @@ async def _handle_text_message(
         logger.exception("Failed to handle text message (message_id=%s)", message_id)
         reply_text = FALLBACK_ERROR_REPLY
 
-    await _send_reply_and_record(
-        pool, queries, send, wa_id, user_id, message_id, "text", reply_text,
-        already_persisted=handled,
-    )
+    await _send_reply(send, wa_id, message_id, reply_text)
 
 
 async def _maybe_update_timezone_from_text(
@@ -222,11 +213,10 @@ async def _handle_location_message(pool, message: dict, timezone_service, send, 
         return
 
     user_id = await queries.get_or_create_user_id(pool, wa_id)
-    if await queries.is_message_processed(pool, message_id):
+    if not await queries.claim_message(pool, user_id, message_id, kind="location"):
         logger.info("Duplicate webhook delivery for message_id=%s, skipping", message_id)
         return
 
-    handled = False
     try:
         time_zone = timezone_service.timezone_from_location(latitude, longitude)
         if time_zone is not None:
@@ -240,15 +230,11 @@ async def _handle_location_message(pool, message: dict, timezone_service, send, 
                 "I couldn't figure out a time zone from that location — "
                 "could you try sharing it again?"
             )
-        handled = True
     except Exception:
         logger.exception("Failed to handle location message (message_id=%s)", message_id)
         reply_text = FALLBACK_ERROR_REPLY
 
-    await _send_reply_and_record(
-        pool, queries, send, wa_id, user_id, message_id, "location", reply_text,
-        already_persisted=handled,
-    )
+    await _send_reply(send, wa_id, message_id, reply_text)
 
 
 async def _handle_unsupported_message(
@@ -267,22 +253,17 @@ async def _handle_unsupported_message(
         return
 
     user_id = await queries.get_or_create_user_id(pool, wa_id)
-    if await queries.is_message_processed(pool, message_id):
+    if not await queries.claim_message(pool, user_id, message_id, kind="other"):
         logger.info("Duplicate webhook delivery for message_id=%s, skipping", message_id)
         return
 
-    handled = False
     try:
         reply_text = chat_fallback.acknowledge_unsupported_type()
-        handled = True
     except Exception:
         logger.exception("Failed to handle unsupported message (message_id=%s)", message_id)
         reply_text = FALLBACK_ERROR_REPLY
 
-    await _send_reply_and_record(
-        pool, queries, send, wa_id, user_id, message_id, "other", reply_text,
-        already_persisted=handled,
-    )
+    await _send_reply(send, wa_id, message_id, reply_text)
 
 
 def _mask(phone: str) -> str:
@@ -308,18 +289,13 @@ async def _best_effort_mark_as_read(send, message_id: str) -> None:
         logger.warning("mark_as_read failed for message_id=%s, continuing anyway", message_id)
 
 
-async def _send_reply_and_record(
-    pool, queries, send, wa_id, user_id, message_id, kind, reply_text, *, already_persisted
-) -> None:
-    if already_persisted:
-        # Whatever needed to be durably written (a meal, a cleared pending
-        # clarification) has already happened. Record the dedupe key now,
-        # *before* attempting to send the reply, so that a redelivered
-        # webhook (Meta retries on timeout/non-2xx) short-circuits on the
-        # is_message_processed check instead of reprocessing and double-
-        # logging just because the reply send failed.
-        await queries.record_message(pool, user_id, message_id, direction="in", kind=kind)
-
+async def _send_reply(send, wa_id: str, message_id: str, reply_text: str) -> None:
+    """The inbound message is already claimed (queries.claim_message, at the
+    top of every handler) before this runs, so there's nothing left to
+    record here — sending is the only remaining step. A failure to send
+    doesn't un-claim the message: see claim_message's docstring for the
+    accepted trade-off (no automatic Meta-retry recovery from a transient
+    failure, in exchange for closing the duplicate-processing race)."""
     try:
         await send.send_text_message(wa_id, reply_text)
     except httpx.HTTPStatusError as exc:
@@ -328,12 +304,5 @@ async def _send_reply_and_record(
             exc.response.status_code,
             message_id,
         )
-        return
     except Exception:
         logger.exception("Failed to send reply for message_id=%s", message_id)
-        return
-
-    if not already_persisted:
-        # Nothing was persisted — safe to let a retry try again, so only
-        # record it as processed once the fallback reply is confirmed sent.
-        await queries.record_message(pool, user_id, message_id, direction="in", kind=kind)
