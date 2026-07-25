@@ -1,3 +1,5 @@
+import datetime as dt
+
 import pytest
 
 from app.config import settings
@@ -20,13 +22,23 @@ async def test_handle_incoming_photo_passes_downloaded_media_type_to_vision(monk
             return None
 
         async def create_meal(
-            self, user_id, media_id, foods, total_calories, confidence, now, model_id=None
+            self,
+            user_id,
+            foods,
+            total_calories,
+            confidence,
+            now,
+            model_id=None,
+            *,
+            media_id=None,
+            text_entry=None,
         ):
             return queries.MealRecord(
                 id="meal-1",
                 user_id=user_id,
                 logged_at=now,
-                photo_media_ids=[media_id],
+                photo_media_ids=[media_id] if media_id else [],
+                text_entries=[text_entry] if text_entry else [],
                 foods=foods,
                 total_calories=total_calories,
                 confidence=confidence,
@@ -130,7 +142,9 @@ async def test_clarifying_question_asks_instead_of_logging(monkeypatch):
 
     pending_calls = {}
 
-    async def fake_set_pending_clarification(pool, user_id, media_id, media_type, question):
+    async def fake_set_pending_clarification(
+        pool, user_id, media_type, question, *, media_id=None, text_body=None
+    ):
         pending_calls["args"] = (user_id, media_id, media_type, question)
 
     monkeypatch.setattr(pool_module, "get_pool", fake_get_pool)
@@ -165,13 +179,23 @@ async def test_clarification_reply_completes_the_analysis(monkeypatch):
             return None
 
         async def create_meal(
-            self, user_id, media_id, foods, total_calories, confidence, now, model_id=None
+            self,
+            user_id,
+            foods,
+            total_calories,
+            confidence,
+            now,
+            model_id=None,
+            *,
+            media_id=None,
+            text_entry=None,
         ):
             return queries.MealRecord(
                 id="meal-clarified",
                 user_id=user_id,
                 logged_at=now,
-                photo_media_ids=[media_id],
+                photo_media_ids=[media_id] if media_id else [],
+                text_entries=[text_entry] if text_entry else [],
                 foods=foods,
                 total_calories=total_calories,
                 confidence=confidence,
@@ -233,6 +257,72 @@ async def test_clarification_reply_completes_the_analysis(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_text_clarification_reply_completes_the_analysis(monkeypatch):
+    """specs/005-text-meal-logging, T016: the same completion path handles a
+    text-originated pending clarification — no photo to re-download, so the
+    original text_body is re-analyzed together with the user's answer, and
+    logged with a combined text_entry (one round trip, same cap as photo)."""
+    from app.db import pool as pool_module
+    from app.services import text_analysis
+
+    repo = InMemoryMealRepository()
+
+    async def fake_get_pool():
+        return object()
+
+    async def fake_get_pending_clarification(pool, user_id):
+        return {
+            "media_id": None,
+            "media_type": "text",
+            "text_body": "chicken and rice",
+            "question": "About how much chicken and rice was that?",
+        }
+
+    cleared = {"called": False}
+
+    async def fake_clear_pending_clarification(pool, user_id):
+        cleared["called"] = True
+
+    captured = {}
+
+    async def fake_analyze_text(text, clarification=None):
+        captured["text"] = text
+        captured["clarification"] = clarification
+        return {
+            "foods": [
+                {"name": "chicken", "portion_grams": 150, "calories": 250,
+                 "protein_g": 46, "carbs_g": 0, "fat_g": 5},
+                {"name": "rice", "portion_grams": 200, "calories": 260,
+                 "protein_g": 5, "carbs_g": 56, "fat_g": 0},
+            ],
+            "total_calories": 510,
+            "confidence": 0.85,
+            "clarifying_question": None,
+            "is_food_description": True,
+        }
+
+    monkeypatch.setattr(pool_module, "get_pool", fake_get_pool)
+    monkeypatch.setattr(queries, "AsyncpgMealRepository", lambda pool: repo)
+    monkeypatch.setattr(queries, "get_pending_clarification", fake_get_pending_clarification)
+    monkeypatch.setattr(queries, "clear_pending_clarification", fake_clear_pending_clarification)
+    monkeypatch.setattr(text_analysis, "analyze_text", fake_analyze_text)
+
+    reply = await meal_logging.handle_clarification_reply(
+        "user-1", "15551234567", "150g chicken, 200g rice"
+    )
+
+    assert captured["text"] == "chicken and rice"
+    assert captured["clarification"] == "150g chicken, 200g rice"
+    assert cleared["called"] is True
+    assert "kcal" in reply
+    assert len(repo.meals) == 1
+    meal = next(iter(repo.meals.values()))
+    assert meal.photo_media_ids == []
+    assert meal.text_entries == ["chicken and rice (clarified: 150g chicken, 200g rice)"]
+    assert meal.total_calories == 510
+
+
+@pytest.mark.asyncio
 async def test_not_food_photo_never_updates_daily_total(monkeypatch):
     """spec 002-daily-total-tracking, FR-007: a photo not recognized as food
     must never contribute to daily_totals — it never reaches log_meal_photo
@@ -279,6 +369,36 @@ async def test_clarification_reply_returns_none_when_nothing_pending(monkeypatch
     reply = await meal_logging.handle_clarification_reply("user-1", "15551234567", "random text")
 
     assert reply is None
+
+
+@pytest.mark.asyncio
+async def test_clarification_reply_defers_on_safety_signal_without_touching_pending(monkeypatch):
+    """Regression test (found live via coach-simulator, specs/005-text-meal-
+    logging review): a safety-relevant reply to a pending clarification must
+    defer to chat_fallback's safety escalation, not be swallowed by
+    NOT_FOOD_REPLY or a meal-logged reply. The pending clarification itself
+    must be left untouched (get_pending_clarification/clear_pending_clarification
+    must never even be called), so the user can still answer it later."""
+    from app.db import pool as pool_module
+
+    called = {"get_pending": False}
+
+    async def fake_get_pool():
+        return object()
+
+    async def fake_get_pending_clarification(pool, user_id):
+        called["get_pending"] = True
+        return {"media_id": "media-1", "media_type": "image/jpeg", "question": "How much?"}
+
+    monkeypatch.setattr(pool_module, "get_pool", fake_get_pool)
+    monkeypatch.setattr(queries, "get_pending_clarification", fake_get_pending_clarification)
+
+    reply = await meal_logging.handle_clarification_reply(
+        "user-1", "15551234567", "honestly I haven't eaten in days"
+    )
+
+    assert reply is None
+    assert called["get_pending"] is False
 
 
 @pytest.mark.asyncio
@@ -518,3 +638,45 @@ async def test_second_photo_in_a_meal_gets_item_and_running_total_inline(monkeyp
         "Diet soda: 0 kcal added.\n"
         "Meal total: ~342-418 kcal (protein ~18g, carbs ~11g, fat ~30g)."
     )
+
+
+@pytest.mark.asyncio
+async def test_repo_create_meal_accepts_text_entry_with_no_media_id():
+    """Regression test for specs/005-text-meal-logging: a meal can now
+    originate from a typed description instead of a photo — create_meal must
+    persist that with an empty photo_media_ids and a populated text_entries,
+    not require a media_id."""
+    repo = InMemoryMealRepository()
+    now = dt.datetime(2026, 7, 25, 12, 0, tzinfo=dt.UTC)
+
+    meal = await repo.create_meal(
+        "user-1",
+        [{"name": "rice", "portion_grams": 100, "calories": 130,
+          "protein_g": 3, "carbs_g": 28, "fat_g": 0}],
+        130,
+        0.9,
+        now,
+        text_entry="100 grams rice",
+    )
+
+    assert meal.photo_media_ids == []
+    assert meal.text_entries == ["100 grams rice"]
+
+
+@pytest.mark.asyncio
+async def test_repo_append_to_meal_mixes_photo_and_text_contributions():
+    """A meal started by a photo can be appended to by a text description
+    (and vice versa) — both arrays accumulate independently, in order."""
+    repo = InMemoryMealRepository()
+    now = dt.datetime(2026, 7, 25, 12, 0, tzinfo=dt.UTC)
+
+    meal = await repo.create_meal(
+        "user-1", [{"name": "chicken", "calories": 200}], 200, 0.9, now, media_id="media-1"
+    )
+    meal = await repo.append_to_meal(
+        meal, [{"name": "rice", "calories": 130}], 130, 0.9, text_entry="100 grams rice"
+    )
+
+    assert meal.photo_media_ids == ["media-1"]
+    assert meal.text_entries == ["100 grams rice"]
+    assert meal.total_calories == 330
