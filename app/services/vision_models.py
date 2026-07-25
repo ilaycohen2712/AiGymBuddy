@@ -90,7 +90,21 @@ class ClaudeVisionClient:
 
         response = await client.messages.create(
             model=self._model,
-            max_tokens=1024,
+            # This model emits an unrequested "thinking" content block ahead
+            # of its actual answer, and that reasoning competes with the
+            # answer for the same max_tokens budget. Its size varies
+            # unpredictably call-to-call (no temperature is pinned) —
+            # confirmed live: the identical photo, called twice at
+            # max_tokens=1024, once left room for a full JSON answer and
+            # once consumed the *entire* budget on thinking alone, returning
+            # zero answer text (stop_reason="max_tokens") and guaranteeing a
+            # JSONDecodeError downstream. 4096 kept total usage well within
+            # budget across every fixture photo tested, including a complex
+            # multi-item one that had triggered the failure at 1024 — but
+            # doesn't structurally rule out an even more complex photo
+            # someday needing more (see the stop_reason check below, which
+            # turns that case into a clear error instead of a cryptic one).
+            max_tokens=4096,
             system=_load_prompt(),
             messages=[
                 {
@@ -111,6 +125,12 @@ class ClaudeVisionClient:
         )
 
         text = "".join(block.text for block in response.content if block.type == "text")
+        if not text:
+            raise ValueError(
+                f"Vision model returned no answer text (stop_reason={response.stop_reason!r}) "
+                "— likely the max_tokens budget was exhausted by the model's own reasoning "
+                "before it produced an answer"
+            )
         result = _extract_json_block(text)
         return _validate_schema(result)
 

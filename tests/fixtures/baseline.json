@@ -1,0 +1,22 @@
+{
+  "recorded_at": "2026-07-25",
+  "model": "claude-sonnet-5",
+  "vision_models_py_commit": "max_tokens=4096, no temperature override",
+  "mean_absolute_error_pct": 28.4,
+  "note": "First real run against manifest.json's 12 fixtures. MAE is well above the constitution's 5% gate — expected, not a regression: these expected_calories values are manually reconstructed estimates (see README.md), not lab measurements, and the model's own run-to-run variance is real (no temperature control available on this model — see app/services/vision_models.py). Treat this as the reference point for catching a GROSS future regression (e.g. MAE roughly doubling), not as evidence the pipeline is within 5% of true values.",
+  "known_anomaly": "pastrami_sandwich_rye.jpg scored 100% error (actual=0) in this run because the real pipeline correctly triggered a clarifying_question for it (calorie_vision.md rules 6/12 — this is the fixture that motivated those rules) and this baseline script, like tests/test_calorie_accuracy.py, does not simulate answering it. A second call with the clarification answered would score very differently. This is a pre-existing test-harness gap, not specific to any recent change.",
+  "results": [
+    {"image": "pastrami_sandwich_rye.jpg", "expected": 480, "actual": 0, "err_pct": 100.0},
+    {"image": "salad_cherry_tomato_feta.jpg", "expected": 300, "actual": 267, "err_pct": 11.0},
+    {"image": "salad_tomato_iceberg_feta.jpg", "expected": 200, "actual": 208, "err_pct": 4.0},
+    {"image": "penne_pasta_tomato_sauce.jpg", "expected": 410, "actual": 410, "err_pct": 0.0},
+    {"image": "fried_eggs_shakshuka_avocado.jpg", "expected": 490, "actual": 650, "err_pct": 32.7},
+    {"image": "ground_beef_potatoes_eggplant.jpg", "expected": 700, "actual": 840, "err_pct": 20.0},
+    {"image": "braised_meat_potatoes_cucumber.jpg", "expected": 800, "actual": 1008, "err_pct": 26.0},
+    {"image": "sliced_steak_small_portion.jpg", "expected": 410, "actual": 550, "err_pct": 34.1},
+    {"image": "sliced_steak_large_platter.jpg", "expected": 1080, "actual": 1510, "err_pct": 39.8},
+    {"image": "cheese_pizza_whole.jpg", "expected": 2100, "actual": 2250, "err_pct": 7.1},
+    {"image": "sushi_rolls_noodles.jpg", "expected": 770, "actual": 1050, "err_pct": 36.4},
+    {"image": "two_burgers_fries.jpg", "expected": 1650, "actual": 2145, "err_pct": 30.0}
+  ]
+}

@@ -18,7 +18,36 @@ ground truth.
 The test skips itself (via `pytest.mark.skipif`) if `manifest.json` is empty or
 `ANTHROPIC_API_KEY` isn't set — as of 2026-07-25, `manifest.json` has 12 labeled
 entries (see below), so only the missing API key gates it in an environment
-without one configured.
+without one configured. Note: it checks `os.environ["ANTHROPIC_API_KEY"]`
+directly, not `app.config.settings` — a `.env` file alone (which the app itself
+reads via pydantic-settings) won't satisfy it; the variable needs to be
+actually exported into the shell environment.
+
+### Known state of the 5% gate (as of 2026-07-25)
+
+The first real run against all 12 fixtures (`tests/fixtures/baseline.json`)
+came back at **28-33% MAE, well above the 5% gate** — the test currently
+fails for real, not just in theory. This isn't a pipeline regression; it's
+two pre-existing, structural facts becoming visible for the first time now
+that the fixtures are actually populated:
+
+1. Every `expected_calories` value here is a manually reconstructed estimate,
+   not a lab measurement (see each entry's reasoning below) — a 20-30% gap
+   against the real model is plausible even with a perfectly fine pipeline.
+2. This model has real run-to-run variance with no way to pin it down (see
+   `app/services/vision_models.py` — `temperature` is rejected outright by
+   this model), so a single MAE run is itself noisy.
+
+`pastrami_sandwich_rye.jpg` specifically can score wildly (including a
+100%-error zero, if `foods` comes back empty) because it reliably triggers a
+`clarifying_question` (it's the fixture that motivated `calorie_vision.md`
+rules 6/12) — neither this baseline nor `test_calorie_accuracy.py` simulates
+answering it, so it's being scored on an intentionally incomplete first pass.
+
+Treat the 5% gate today as aspirational until either the ground truth gets
+tightened (real measurements, not reconstructions) or the threshold/
+methodology is revisited — a failing run right now should not, by itself, be
+read as "the vision pipeline broke."
 
 ## Macro ground truth (for model comparison)
 
