@@ -37,30 +37,29 @@ still scores calories normally and is simply excluded from macro scoring.
 }
 ```
 
-## Candidate fixtures from live testing (not yet added)
+## Photos from live testing (2026-07-25)
 
-These photos came up during live bot testing (2026-07-24) and would make good
-fixtures once the actual image files are available on disk — the images
-themselves only exist in WhatsApp/chat history right now, not this repo.
+These images (exported from WhatsApp chat history) are in this directory now.
+Only one has a manifest entry — the rest need real ground truth (a nutrition
+label, recipe-based calc, or scale) before they're useful for the MAE
+regression test; a guessed number would just test self-consistency, not
+accuracy.
 
-- **Open-faced pastrami sandwich** (rye bread, ~120g sliced pastrami, thin
-  creamy spread) — the case that motivated rules 12 and 13 in
-  `calorie_vision.md` (v4/v5). Has a reasonably solid ground-truth estimate
-  from a nutrition reference: 2 slices rye ~200 kcal + 120g cured beef
-  pastrami at ~140-150 kcal/100g (~170-180 kcal) + ~1.5 tbsp spread ~80 kcal
-  ≈ **~450-460 kcal total**. Good candidate to add first and re-validate
-  rules 12/13 against once the file is exported.
-- Caprese-style cherry tomato + feta salad (with olive oil)
-- Chopped tomato + iceberg lettuce + feta salad
-- Eggs (4, fried) + shakshuka-style tomato sauce + avocado
-- Ground beef + roasted potatoes + eggplant
-- Braised meat + roasted potatoes + cucumber + a starch/dough item
-- Sliced steak (two separate photos, different cuts/servings)
-- Cheese pizza, sliced
-- Sushi rolls + noodles (mixed/combined photo)
-- Two burgers (one with a fried egg) + fries
-
-No `expected_calories` is included for most of these — they'd need a real
-reference (nutrition label, recipe-based calc, or scale) before they're
-useful for the MAE regression test; a guessed number would just test
-self-consistency, not accuracy.
+- **`pastrami_sandwich_rye.jpg`** — in `manifest.json`. The case that
+  motivated rules 12 and 13 in `calorie_vision.md` (v4/v5): the bot
+  originally guessed ~648-792 kcal for this photo. `expected_calories: 480`
+  is a reconstructed estimate, not a scale measurement — 2 slices rye ~220
+  kcal + 120g cured beef pastrami at ~140-150 kcal/100g (~170-180 kcal,
+  120g being the amount the user confirmed live when the bot asked) + spread
+  ~80 kcal ≈ ~470-480 kcal. Good enough to catch a gross regression, not
+  precise enough to be the only fixture relied on.
+- `salad_cherry_tomato_feta.jpg` — cherry tomatoes + feta, olive oil
+- `salad_tomato_iceberg_feta.jpg` — chopped tomato + iceberg lettuce + feta
+- `penne_pasta_tomato_sauce.jpg` — penne with tomato sauce + grated parmesan
+- `fried_eggs_shakshuka_avocado.jpg` — 4 fried eggs + shakshuka-style sauce + avocado
+- `ground_beef_potatoes_eggplant.jpg` — ground beef + roasted potatoes + eggplant
+- `braised_meat_potatoes_cucumber.jpg` — braised meat + roasted potatoes + cucumber + a baked starch item
+- `sliced_steak_small_portion.jpg` / `sliced_steak_large_platter.jpg` — two separate steak servings, different sizes
+- `cheese_pizza_whole.jpg` — whole cheese pizza, 8 slices
+- `sushi_rolls_noodles.jpg` — sushi rolls + a side of noodles
+- `two_burgers_fries.jpg` — two burgers (one with a fried egg) + fries
