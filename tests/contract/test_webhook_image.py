@@ -481,12 +481,15 @@ def test_text_message_gets_fallback_reply_when_nothing_matches(monkeypatch):
     monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
     calls = _stub_db(monkeypatch)
 
-    from app.services import chat_fallback, meal_logging
+    from app.services import chat_fallback, daily_target, meal_logging
     from app.whatsapp import send
 
     sent = {}
 
     async def fake_handle_clarification_reply(user_id, wa_id, text):
+        return None
+
+    async def fake_handle_daily_target_reply(user_id, wa_id, text):
         return None
 
     async def fake_send_text_message(to, body):
@@ -499,6 +502,7 @@ def test_text_message_gets_fallback_reply_when_nothing_matches(monkeypatch):
     from app.services import timezone as timezone_service
 
     monkeypatch.setattr(meal_logging, "handle_clarification_reply", fake_handle_clarification_reply)
+    monkeypatch.setattr(daily_target, "handle_daily_target_reply", fake_handle_daily_target_reply)
     monkeypatch.setattr(send, "send_text_message", fake_send_text_message)
     monkeypatch.setattr(
         timezone_service, "extract_timezone_from_text", fake_extract_timezone_from_text
@@ -525,7 +529,7 @@ def test_redirection_attempt_gets_fallback_not_compliance(monkeypatch):
     monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
     calls = _stub_db(monkeypatch)
 
-    from app.services import chat_fallback, meal_logging
+    from app.services import chat_fallback, daily_target, meal_logging
     from app.whatsapp import send
 
     sent = {}
@@ -533,11 +537,15 @@ def test_redirection_attempt_gets_fallback_not_compliance(monkeypatch):
     async def fake_handle_clarification_reply(user_id, wa_id, text):
         return None
 
+    async def fake_handle_daily_target_reply(user_id, wa_id, text):
+        return None
+
     async def fake_send_text_message(to, body):
         sent["body"] = body
         return {"messages": [{"id": "wamid.reply"}]}
 
     monkeypatch.setattr(meal_logging, "handle_clarification_reply", fake_handle_clarification_reply)
+    monkeypatch.setattr(daily_target, "handle_daily_target_reply", fake_handle_daily_target_reply)
     monkeypatch.setattr(send, "send_text_message", fake_send_text_message)
 
     client = TestClient(app)
@@ -676,9 +684,12 @@ def test_total_request_replies_with_range_from_daily_totals(monkeypatch):
     calls = _stub_db(monkeypatch)
 
     from app.db import queries
-    from app.services import meal_logging
+    from app.services import daily_target, meal_logging
 
     async def fake_handle_clarification_reply(user_id, wa_id, text):
+        return None
+
+    async def fake_handle_daily_target_reply(user_id, wa_id, text):
         return None
 
     async def fake_get_user_time_zone(pool, user_id):
@@ -700,6 +711,7 @@ def test_total_request_replies_with_range_from_daily_totals(monkeypatch):
     from app.whatsapp import send
 
     monkeypatch.setattr(meal_logging, "handle_clarification_reply", fake_handle_clarification_reply)
+    monkeypatch.setattr(daily_target, "handle_daily_target_reply", fake_handle_daily_target_reply)
     monkeypatch.setattr(queries, "get_user_time_zone", fake_get_user_time_zone)
     monkeypatch.setattr(queries, "get_daily_total", fake_get_daily_total)
     monkeypatch.setattr(
@@ -877,11 +889,14 @@ def test_text_place_mention_updates_time_zone_silently(monkeypatch):
     calls = _stub_db(monkeypatch)
 
     from app.db import queries
-    from app.services import chat_fallback, meal_logging
+    from app.services import chat_fallback, daily_target, meal_logging
     from app.services import timezone as timezone_service
     from app.whatsapp import send
 
     async def fake_handle_clarification_reply(user_id, wa_id, text):
+        return None
+
+    async def fake_handle_daily_target_reply(user_id, wa_id, text):
         return None
 
     async def fake_extract_timezone_from_text(text):
@@ -899,6 +914,7 @@ def test_text_place_mention_updates_time_zone_silently(monkeypatch):
         return {"messages": [{"id": "wamid.reply"}]}
 
     monkeypatch.setattr(meal_logging, "handle_clarification_reply", fake_handle_clarification_reply)
+    monkeypatch.setattr(daily_target, "handle_daily_target_reply", fake_handle_daily_target_reply)
     monkeypatch.setattr(
         timezone_service, "extract_timezone_from_text", fake_extract_timezone_from_text
     )
@@ -975,6 +991,85 @@ def test_unsupported_message_type_gets_acknowledgment(monkeypatch, msg_type):
     assert calls["recorded"] == (
         "user-for-15551234567", f"wamid.unsupported-{msg_type}", "in", "other",
     )
+
+
+def test_pending_daily_target_ask_reply_is_stored_before_chat_fallback(monkeypatch):
+    """specs/001-photo-calorie-tracking User Story 3: once the scheduler has
+    asked a user for their daily calorie target, the next text reply must be
+    routed to daily_target.handle_daily_target_reply — not to
+    chat_fallback's generic fallback — even though the text itself ("2200")
+    doesn't match any chat_fallback-recognized question."""
+    monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
+    calls = _stub_db(monkeypatch)
+
+    from app.services import chat_fallback, daily_target, meal_logging
+    from app.whatsapp import send
+
+    async def fake_handle_clarification_reply(user_id, wa_id, text):
+        return None
+
+    captured = {}
+
+    async def fake_handle_daily_target_reply(user_id, wa_id, text):
+        captured["args"] = (user_id, wa_id, text)
+        return "Got it — 2200 kcal/day, saved for your daily reports."
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("must not fall through to chat_fallback")
+
+    sent = {}
+
+    async def fake_send_text_message(to, body):
+        sent["body"] = body
+        return {"messages": [{"id": "wamid.reply"}]}
+
+    monkeypatch.setattr(meal_logging, "handle_clarification_reply", fake_handle_clarification_reply)
+    monkeypatch.setattr(daily_target, "handle_daily_target_reply", fake_handle_daily_target_reply)
+    monkeypatch.setattr(chat_fallback, "handle_free_form_text", fail_if_called)
+    monkeypatch.setattr(send, "send_text_message", fake_send_text_message)
+
+    client = TestClient(app)
+    body = json.dumps(_text_payload(body_text="2200", message_id="wamid.target1")).encode()
+
+    resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
+
+    assert resp.status_code == 200
+    assert captured["args"] == ("user-for-15551234567", "15551234567", "2200")
+    assert sent["body"] == "Got it — 2200 kcal/day, saved for your daily reports."
+    assert calls["recorded"] == ("user-for-15551234567", "wamid.target1", "in", "text")
+
+
+def test_clarification_still_takes_priority_over_daily_target_reply(monkeypatch):
+    """FR-002 (unchanged): a pending clarifying question is still resolved
+    first, even if a daily-target ask also happens to be pending — the
+    daily-target handler must never even be called in that case."""
+    monkeypatch.setattr(settings, "whatsapp_app_secret", APP_SECRET)
+    _stub_db(monkeypatch)
+
+    from app.services import daily_target, meal_logging
+    from app.whatsapp import send
+
+    async def fake_handle_clarification_reply(user_id, wa_id, text):
+        return "That's about 176-264 kcal (protein ~6g, carbs ~24g, fat ~6g)."
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("must not be reached when a clarification is pending")
+
+    async def fake_send_text_message(to, body):
+        return {"messages": [{"id": "wamid.reply"}]}
+
+    monkeypatch.setattr(meal_logging, "handle_clarification_reply", fake_handle_clarification_reply)
+    monkeypatch.setattr(daily_target, "handle_daily_target_reply", fail_if_called)
+    monkeypatch.setattr(send, "send_text_message", fake_send_text_message)
+
+    client = TestClient(app)
+    body = json.dumps(
+        _text_payload(body_text="It's vegetable", message_id="wamid.clarify-priority")
+    ).encode()
+
+    resp = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
+
+    assert resp.status_code == 200
 
 
 def test_unsupported_message_type_duplicate_delivery_is_deduped(monkeypatch):

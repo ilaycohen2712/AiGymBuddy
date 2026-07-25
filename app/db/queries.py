@@ -321,6 +321,102 @@ async def upsert_daily_total(
     )
 
 
+async def get_daily_calorie_target(pool, user_id: str) -> int | None:
+    row = await pool.fetchrow(
+        "SELECT daily_calorie_target FROM users WHERE id = $1", uuid.UUID(user_id)
+    )
+    return row["daily_calorie_target"] if row else None
+
+
+async def set_daily_calorie_target(pool, user_id: str, target: int) -> None:
+    # Defense-in-depth: daily_target.py already validates against the safety
+    # floor before calling this, but persistence is the last line of defense
+    # for the invariant itself (data-model.md, Constitution IV/III) — same
+    # pattern as update_user_time_zone's zoneinfo check.
+    from app.services.daily_target import SAFETY_FLOOR_KCAL
+
+    if target < SAFETY_FLOOR_KCAL:
+        raise ValueError(f"Refusing to persist below-floor daily calorie target: {target!r}")
+    await pool.execute(
+        "UPDATE users SET daily_calorie_target = $1 WHERE id = $2", target, uuid.UUID(user_id)
+    )
+
+
+async def set_pending_daily_target_ask(pool, user_id: str) -> None:
+    """Records that the daily-target ask was sent today (contracts/daily-
+    target-collection.md) — upserts asked_at to now() so a later re-ask (the
+    user never having answered) refreshes the date the scheduler checks
+    against."""
+    await pool.execute(
+        "INSERT INTO pending_daily_target_asks (user_id, asked_at) VALUES ($1, now()) "
+        "ON CONFLICT (user_id) DO UPDATE SET asked_at = now()",
+        uuid.UUID(user_id),
+    )
+
+
+async def get_pending_daily_target_ask(pool, user_id: str) -> dt.datetime | None:
+    row = await pool.fetchrow(
+        "SELECT asked_at FROM pending_daily_target_asks WHERE user_id = $1", uuid.UUID(user_id)
+    )
+    return row["asked_at"] if row else None
+
+
+async def clear_pending_daily_target_ask(pool, user_id: str) -> None:
+    await pool.execute(
+        "DELETE FROM pending_daily_target_asks WHERE user_id = $1", uuid.UUID(user_id)
+    )
+
+
+async def has_daily_report_for_date(pool, user_id: str, date: dt.date) -> bool:
+    row = await pool.fetchrow(
+        "SELECT 1 FROM daily_reports WHERE user_id = $1 AND date = $2",
+        uuid.UUID(user_id),
+        date,
+    )
+    return row is not None
+
+
+async def insert_daily_report(
+    pool,
+    user_id: str,
+    date: dt.date,
+    *,
+    calories_total: float,
+    protein_g: float,
+    carbs_g: float,
+    fat_g: float,
+    feedback_text: str,
+) -> bool:
+    """Insert-time enforcement of "at most one report per (user_id, date)"
+    (FR-006, SC-003, contracts/eod-report.md) — the UNIQUE constraint makes
+    this safe to call more than once for the same day; a conflict means
+    "already sent, skip" and returns False rather than raising."""
+    result = await pool.execute(
+        "INSERT INTO daily_reports "
+        "(user_id, date, calories_total, protein_g, carbs_g, fat_g, feedback_text) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (user_id, date) DO NOTHING",
+        uuid.UUID(user_id),
+        date,
+        calories_total,
+        protein_g,
+        carbs_g,
+        fat_g,
+        feedback_text,
+    )
+    return result.endswith(" 1")
+
+
+async def get_users_for_eod_check(pool) -> list[dict]:
+    """Every user's id/phone/time zone/target — the scheduler (app/scheduler/
+    eod_trigger.py) filters this list itself to whoever's local time is
+    currently within the fixed report hour, rather than pushing that filter
+    into SQL, since it needs each row's own IANA zone to evaluate."""
+    rows = await pool.fetch(
+        "SELECT id, wa_phone, time_zone, daily_calorie_target FROM users"
+    )
+    return [dict(row) for row in rows]
+
+
 async def get_user_time_zone(pool, user_id: str) -> str:
     row = await pool.fetchrow(
         "SELECT time_zone FROM users WHERE id = $1", uuid.UUID(user_id)

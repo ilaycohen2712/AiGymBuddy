@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from app.db.migrate import run_migrations
 from app.db.pool import get_pool
+from app.scheduler.eod_trigger import router as eod_trigger_router
 from app.whatsapp.webhook import router as webhook_router
 
 # Without this, Python defaults to WARNING — every logger.info() call in the
@@ -22,6 +23,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AiGymBuddy", lifespan=lifespan)
 app.include_router(webhook_router)
+app.include_router(eod_trigger_router)
 
 
 @app.get("/health")
