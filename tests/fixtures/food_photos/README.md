@@ -36,3 +36,30 @@ still scores calories normally and is simply excluded from macro scoring.
   "expected_fat_g": 22
 }
 ```
+
+## Photos from live testing (2026-07-25)
+
+These images (exported from WhatsApp chat history) are in this directory now.
+Only one has a manifest entry — the rest need real ground truth (a nutrition
+label, recipe-based calc, or scale) before they're useful for the MAE
+regression test; a guessed number would just test self-consistency, not
+accuracy.
+
+- **`pastrami_sandwich_rye.jpg`** — in `manifest.json`. The case that
+  motivated rules 12 and 13 in `calorie_vision.md` (v4/v5): the bot
+  originally guessed ~648-792 kcal for this photo. `expected_calories: 480`
+  is a reconstructed estimate, not a scale measurement — 2 slices rye ~220
+  kcal + 120g cured beef pastrami at ~140-150 kcal/100g (~170-180 kcal,
+  120g being the amount the user confirmed live when the bot asked) + spread
+  ~80 kcal ≈ ~470-480 kcal. Good enough to catch a gross regression, not
+  precise enough to be the only fixture relied on.
+- `salad_cherry_tomato_feta.jpg` — cherry tomatoes + feta, olive oil
+- `salad_tomato_iceberg_feta.jpg` — chopped tomato + iceberg lettuce + feta
+- `penne_pasta_tomato_sauce.jpg` — penne with tomato sauce + grated parmesan
+- `fried_eggs_shakshuka_avocado.jpg` — 4 fried eggs + shakshuka-style sauce + avocado
+- `ground_beef_potatoes_eggplant.jpg` — ground beef + roasted potatoes + eggplant
+- `braised_meat_potatoes_cucumber.jpg` — braised meat + roasted potatoes + cucumber + a baked starch item
+- `sliced_steak_small_portion.jpg` / `sliced_steak_large_platter.jpg` — two separate steak servings, different sizes
+- `cheese_pizza_whole.jpg` — whole cheese pizza, 8 slices
+- `sushi_rolls_noodles.jpg` — sushi rolls + a side of noodles
+- `two_burgers_fries.jpg` — two burgers (one with a fried egg) + fries

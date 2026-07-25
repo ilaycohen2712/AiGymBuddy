@@ -1,1 +1,9 @@
-[]
+[
+  {
+    "image": "pastrami_sandwich_rye.jpg",
+    "expected_calories": 480,
+    "expected_protein_g": 42,
+    "expected_carbs_g": 22,
+    "expected_fat_g": 24
+  }
+]
