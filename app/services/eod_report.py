@@ -4,6 +4,7 @@ import asyncio
 import datetime as dt
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import anthropic
@@ -15,7 +16,11 @@ logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "eod_feedback.md"
 _FEEDBACK_MODEL = "claude-haiku-4-5"
-FEEDBACK_MAX_CHARS = 600
+# The sent message is the totals line (format_daily_total_reply, typically
+# under 100 chars) plus this feedback text — capped below coach-persona's
+# "~600 chars" voice guideline, not at it, so the combined message still
+# fits that guideline rather than only the feedback half of it.
+FEEDBACK_MAX_CHARS = 500
 
 _client: anthropic.AsyncAnthropic | None = None
 _client_lock = asyncio.Lock()
@@ -59,6 +64,10 @@ def _validate_feedback(result: dict) -> dict:
     missing = required - result.keys()
     if missing:
         raise ValueError(f"eod_feedback result missing required fields: {missing}")
+    if not isinstance(result["feedback_text"], str):
+        raise ValueError(
+            f"eod_feedback result has non-string feedback_text: {result['feedback_text']!r}"
+        )
     if result["tone"] not in ("encouraging", "neutral"):
         raise ValueError(f"eod_feedback result has invalid tone: {result['tone']!r}")
     if len(result["feedback_text"]) > FEEDBACK_MAX_CHARS:
@@ -100,44 +109,68 @@ def format_report_message(totals: dict, feedback_text: str) -> str:
     return f"{format_daily_total_reply(totals)}\n{feedback_text}"
 
 
-async def send_report(user_id: str, wa_phone: str, date: dt.date) -> str | None:
-    """Composes and records one end-of-day report for `date` (the user's
-    local calendar day, resolved by the caller — app/scheduler/eod_trigger.py)
-    per contracts/eod-report.md. Returns the message text to send, or None if
-    a report for this (user_id, date) was already recorded — the caller must
-    not send anything in that case (idempotent per FR-006/SC-003)."""
+@dataclass
+class ReportDraft:
+    message: str
+    totals: dict
+    feedback_text: str
+
+
+async def build_report(user_id: str, wa_phone: str, date: dt.date) -> ReportDraft | None:
+    """Composes one end-of-day report for `date` (the user's local calendar
+    day, resolved by the caller — app/scheduler/eod_trigger.py) per
+    contracts/eod-report.md. Returns None if a report for this
+    (user_id, date) is already recorded — the caller must not send anything
+    in that case (idempotent per FR-006/SC-003).
+
+    Deliberately does NOT persist anything itself: the caller must call
+    record_report_sent(...) only *after* actually delivering the message.
+    Reviewer-flagged bug found live: the original version inserted the
+    daily_reports row before the WhatsApp send was even attempted, so a
+    delivery failure (e.g. the 24h window expired with no fallback template
+    configured) permanently lost that day's report — the row already said
+    "sent" and nothing ever retried it."""
     from app.db import queries
     from app.db.pool import get_pool
 
     pool = await get_pool()
-    totals = await queries.get_daily_total(pool, user_id, date)
-    target = await queries.get_daily_calorie_target(pool, user_id)
-    if target is None:
-        raise ValueError("send_report called without a daily_calorie_target set")
-
-    feedback = await generate_feedback(totals, target)
-    message = format_report_message(totals, feedback["feedback_text"])
-
-    inserted = await queries.insert_daily_report(
-        pool,
-        user_id,
-        date,
-        calories_total=totals["calories"],
-        protein_g=totals["protein_g"],
-        carbs_g=totals["carbs_g"],
-        fat_g=totals["fat_g"],
-        feedback_text=feedback["feedback_text"],
-    )
-    if not inserted:
+    if await queries.has_daily_report_for_date(pool, user_id, date):
         logger.info(
-            "Daily report for %s already recorded for %s, not sending a duplicate",
+            "Daily report for %s already recorded for %s, not building a duplicate",
             _mask(wa_phone),
             date,
         )
         return None
 
-    logger.info("Sending end-of-day report to %s for %s", _mask(wa_phone), date)
-    return message
+    totals = await queries.get_daily_total(pool, user_id, date)
+    target = await queries.get_daily_calorie_target(pool, user_id)
+    if target is None:
+        raise ValueError("build_report called without a daily_calorie_target set")
+
+    feedback = await generate_feedback(totals, target)
+    message = format_report_message(totals, feedback["feedback_text"])
+    return ReportDraft(message=message, totals=totals, feedback_text=feedback["feedback_text"])
+
+
+async def record_report_sent(user_id: str, date: dt.date, draft: ReportDraft) -> None:
+    """Persist that today's report was actually delivered (call only after a
+    successful send, never before) — the daily_reports UNIQUE(user_id, date)
+    constraint still makes this safe even if a near-simultaneous scheduler
+    run already recorded the same day (FR-006/SC-003)."""
+    from app.db import queries
+    from app.db.pool import get_pool
+
+    pool = await get_pool()
+    await queries.insert_daily_report(
+        pool,
+        user_id,
+        date,
+        calories_total=draft.totals["calories"],
+        protein_g=draft.totals["protein_g"],
+        carbs_g=draft.totals["carbs_g"],
+        fat_g=draft.totals["fat_g"],
+        feedback_text=draft.feedback_text,
+    )
 
 
 def _mask(phone: str) -> str:

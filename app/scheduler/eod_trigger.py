@@ -46,6 +46,15 @@ async def run_eod_trigger(now: dt.datetime | None = None) -> int:
     hour — this runs several times an hour by design, per the polling
     interval above — is always safe and never double-sends.
 
+    Every per-user step, including the time zone conversion and the actual
+    send, runs inside that user's own try/except (reviewer-flagged bug found
+    live: an earlier version left the time zone conversion and the send call
+    outside the try block, so one user's bad time zone or a non-131047 send
+    error would abort the whole run and skip every remaining user). Each
+    user's "handled" state is only persisted *after* their message is
+    actually sent — never before — so a delivery failure is retried on the
+    next scheduler tick instead of being silently, permanently lost.
+
     Returns the number of users actually messaged, for the caller/logs."""
     from app.db import queries
     from app.db.pool import get_pool
@@ -58,31 +67,32 @@ async def run_eod_trigger(now: dt.datetime | None = None) -> int:
 
     handled = 0
     for user in users:
-        user_id = str(user["id"])
-        wa_phone = user["wa_phone"]
-        time_zone = user["time_zone"]
-        local_now = now.astimezone(ZoneInfo(time_zone))
-        if local_now.hour != settings.eod_report_hour:
-            continue
-        today = local_now.date()
-
         try:
+            user_id = str(user["id"])
+            wa_phone = user["wa_phone"]
+            time_zone = user["time_zone"]
+            local_now = now.astimezone(ZoneInfo(time_zone))
+            if local_now.hour != settings.eod_report_hour:
+                continue
+            today = local_now.date()
+
             if user["daily_calorie_target"] is None:
                 if await _already_asked_today(pool, queries, user_id, today, time_zone):
                     continue
-                reply = await daily_target.send_target_ask(user_id, wa_phone)
+                reply = await daily_target.build_target_ask()
+                await templates.send_proactive_message(wa_phone, reply)
+                await daily_target.mark_target_ask_sent(user_id, wa_phone)
             else:
-                if await queries.has_daily_report_for_date(pool, user_id, today):
+                draft = await eod_report.build_report(user_id, wa_phone, today)
+                if draft is None:  # already recorded by a near-simultaneous run
                     continue
-                reply = await eod_report.send_report(user_id, wa_phone, today)
-                if reply is None:  # already recorded by a near-simultaneous run
-                    continue
-        except Exception:
-            logger.exception("Failed end-of-day handling for user_id=%s", user_id)
-            continue
+                await templates.send_proactive_message(wa_phone, draft.message)
+                await eod_report.record_report_sent(user_id, today, draft)
 
-        await templates.send_proactive_message(wa_phone, reply)
-        handled += 1
+            handled += 1
+        except Exception:
+            logger.exception("Failed end-of-day handling for user_id=%s", user.get("id"))
+            continue
 
     return handled
 

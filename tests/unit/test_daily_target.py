@@ -42,6 +42,39 @@ async def test_handle_daily_target_reply_returns_none_without_pending_ask(monkey
     assert reply is None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I've barely eaten anything the last three days",
+        "my knee has been killing me since yesterday's squats",
+        "chest pain and I can't breathe",
+    ],
+)
+@pytest.mark.asyncio
+async def test_handle_daily_target_reply_yields_to_safety_signal_even_with_pending_ask(
+    monkeypatch, text
+):
+    """Regression test (reviewer + coach-simulator both found this live): a
+    pending daily-target ask has no expiry and no cap on retries, unlike
+    meal_logging's one-round-trip clarification flow — so unconditionally
+    intercepting every reply here would swallow a genuine safety disclosure
+    indefinitely, never letting chat_fallback's safety check ever run. A
+    safety-signal match must return None (unhandled) without even touching
+    the pending-ask storage, regardless of whether an ask is outstanding."""
+    from app.db import pool as pool_module
+    from app.db import queries
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("must not touch pending-ask storage for a safety-signal message")
+
+    monkeypatch.setattr(pool_module, "get_pool", fail_if_called)
+    monkeypatch.setattr(queries, "get_pending_daily_target_ask", fail_if_called)
+
+    reply = await daily_target.handle_daily_target_reply("user-1", "15551234567", text)
+
+    assert reply is None
+
+
 @pytest.mark.asyncio
 async def test_handle_daily_target_reply_rejects_below_floor(monkeypatch):
     from app.db import pool as pool_module
@@ -66,6 +99,29 @@ async def test_handle_daily_target_reply_rejects_below_floor(monkeypatch):
 
     assert "1500" in reply
     assert stored["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_handle_daily_target_reply_rejects_implausibly_high_target(monkeypatch):
+    from app.db import pool as pool_module
+    from app.db import queries
+
+    async def fake_get_pool():
+        return object()
+
+    async def fake_get_pending_daily_target_ask(pool, user_id):
+        return dt.datetime.now(dt.UTC)
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("must not store an implausible target")
+
+    monkeypatch.setattr(pool_module, "get_pool", fake_get_pool)
+    monkeypatch.setattr(queries, "get_pending_daily_target_ask", fake_get_pending_daily_target_ask)
+    monkeypatch.setattr(queries, "set_daily_calorie_target", fail_if_called)
+
+    reply = await daily_target.handle_daily_target_reply("user-1", "15551234567", "99999999")
+
+    assert reply == daily_target._IMPLAUSIBLE_REPLY
 
 
 @pytest.mark.asyncio
@@ -123,7 +179,19 @@ async def test_handle_daily_target_reply_stores_valid_target_and_clears_pending(
 
 
 @pytest.mark.asyncio
-async def test_send_target_ask_records_pending_ask(monkeypatch):
+async def test_build_target_ask_does_not_touch_storage():
+    # No monkeypatching at all — if this touched the DB it would raise (no
+    # real DATABASE_URL configured for tests), proving build_target_ask is
+    # pure composition; only mark_target_ask_sent (below) may persist, and
+    # only after an actual send succeeds (reviewer-flagged: the previous
+    # version recorded the ask as sent before it was ever delivered).
+    reply = await daily_target.build_target_ask()
+
+    assert reply == daily_target.TARGET_ASK
+
+
+@pytest.mark.asyncio
+async def test_mark_target_ask_sent_records_pending_ask(monkeypatch):
     from app.db import pool as pool_module
     from app.db import queries
 
@@ -138,7 +206,6 @@ async def test_send_target_ask_records_pending_ask(monkeypatch):
     monkeypatch.setattr(pool_module, "get_pool", fake_get_pool)
     monkeypatch.setattr(queries, "set_pending_daily_target_ask", fake_set_pending_daily_target_ask)
 
-    reply = await daily_target.send_target_ask("user-1", "15551234567")
+    await daily_target.mark_target_ask_sent("user-1", "15551234567")
 
-    assert reply == daily_target.TARGET_ASK
     assert recorded["called"] is True
