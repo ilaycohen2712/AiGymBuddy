@@ -60,8 +60,10 @@ async def _dispatch_messages(payload: dict) -> None:
     """Route inbound messages to their handlers. Image handling is wired in by
     the meal-logging feature; text handling completes an outstanding
     clarifying question (app/services/meal_logging.py), a pending daily-
-    target ask (app/services/daily_target.py), or a recognized total-request
-    (app/services/daily_total.py) — this is not a general-purpose chat.
+    target ask (app/services/daily_target.py), a typed food description to
+    log as a meal (app/services/text_meal_logging.py), or a recognized
+    total-request (app/services/daily_total.py) — this is not a
+    general-purpose chat.
 
     Every message is: claimed atomically by wa_message_id *before* any
     expensive work starts (Meta redelivers webhooks on timeout/non-2xx, and
@@ -73,7 +75,7 @@ async def _dispatch_messages(payload: dict) -> None:
     """
     from app.db import queries
     from app.db.pool import get_pool
-    from app.services import chat_fallback, daily_target, meal_logging
+    from app.services import chat_fallback, daily_target, meal_logging, text_meal_logging
     from app.services import timezone as timezone_service
     from app.whatsapp import send
 
@@ -92,6 +94,7 @@ async def _dispatch_messages(payload: dict) -> None:
                         message,
                         meal_logging,
                         daily_target,
+                        text_meal_logging,
                         chat_fallback,
                         timezone_service,
                         send,
@@ -142,7 +145,15 @@ async def _handle_image_message(pool, message: dict, meal_logging, send, queries
 
 
 async def _handle_text_message(
-    pool, message: dict, meal_logging, daily_target, chat_fallback, timezone_service, send, queries
+    pool,
+    message: dict,
+    meal_logging,
+    daily_target,
+    text_meal_logging,
+    chat_fallback,
+    timezone_service,
+    send,
+    queries,
 ) -> None:
     message_id = message.get("id")
     wa_id = message.get("from")
@@ -167,6 +178,15 @@ async def _handle_text_message(
             # after clarification, same shape as chat_fallback's own
             # addition below, so neither disturbs the other's behavior.
             reply_text = await daily_target.handle_daily_target_reply(user_id, wa_id, text_body)
+        if reply_text is None:
+            # Not a pending daily-target ask either. Next: is this a
+            # food-description message to log as a meal (specs/005-text-
+            # meal-logging, contracts/text-dispatch-precedence.md)? Returns
+            # None if the text is safety-relevant or isn't about food at
+            # all, deferring to chat_fallback below in either case.
+            reply_text = await text_meal_logging.handle_text_meal_description(
+                user_id, wa_id, text_body
+            )
         if reply_text is None:
             # Not a pending structured flow at all. Every other free-form
             # text now always gets a reply — a safety escalation, a

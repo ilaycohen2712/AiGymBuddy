@@ -18,6 +18,24 @@ def _sign(body: bytes) -> str:
     return f"sha256={digest}"
 
 
+@pytest.fixture(autouse=True)
+def _stub_text_meal_logging(monkeypatch):
+    """Every test in this file predates specs/005-text-meal-logging's new
+    text dispatch layer. Default it to "not a food description" (None,
+    defer to the next layer) so these existing tests never trigger a real
+    Claude API call — tests that specifically exercise text-based meal
+    logging override this within their own body, which layers on top of
+    (and wins over) this default via the same `monkeypatch` fixture."""
+    from app.services import text_meal_logging
+
+    async def fake_handle_text_meal_description(user_id, wa_id, text):
+        return None
+
+    monkeypatch.setattr(
+        text_meal_logging, "handle_text_meal_description", fake_handle_text_meal_description
+    )
+
+
 def _image_payload(
     wa_id: str = "15551234567", media_id: str = "media-1", message_id: str = "wamid.1"
 ) -> dict:
@@ -620,13 +638,23 @@ def test_clarification_answer_redirection_never_reaches_the_user(monkeypatch):
             return None
 
         async def create_meal(
-            self, user_id, media_id, foods, total_calories, confidence, now, model_id=None
+            self,
+            user_id,
+            foods,
+            total_calories,
+            confidence,
+            now,
+            model_id=None,
+            *,
+            media_id=None,
+            text_entry=None,
         ):
             return queries.MealRecord(
                 id="meal-redirect-test",
                 user_id=user_id,
                 logged_at=now,
-                photo_media_ids=[media_id],
+                photo_media_ids=[media_id] if media_id else [],
+                text_entries=[text_entry] if text_entry else [],
                 foods=foods,
                 total_calories=total_calories,
                 confidence=confidence,

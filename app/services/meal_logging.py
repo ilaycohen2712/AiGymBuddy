@@ -16,6 +16,62 @@ NOT_FOOD_REPLY = (
 )
 
 
+async def log_meal_contribution(
+    user_id: str,
+    result: dict,
+    repo: MealRepository,
+    now: dt.datetime | None = None,
+    model_id: str | None = None,
+    *,
+    media_id: str | None = None,
+    text_entry: str | None = None,
+) -> MealRecord:
+    """Create a new meal entry, or append to an open one within the 10-minute
+    grouping window (FR-014, research.md #2), regardless of whether this
+    contribution came from a photo or a typed food description (specs/005-
+    text-meal-logging) — exactly one of `media_id`/`text_entry` identifies
+    the origin. The window is anchored to the *first* contribution: appending
+    does not extend it, so a meal always closes exactly 10 minutes after it
+    started, no matter how many contributions arrive in between. A sliding
+    window (refreshing on every append) was tried and found live to merge
+    unrelated meals across an entire multi-hour test session.
+
+    `model_id`: which model produced `result` (vision or text), for live
+    traceability (FR-008, specs/003-vision-model-comparison)."""
+    now = now or dt.datetime.now(dt.UTC)
+    foods = result["foods"]
+    total_calories = result["total_calories"]
+    confidence = result.get("confidence")
+
+    existing = await repo.find_open_meal(user_id, now, GROUPING_WINDOW)
+    if existing is not None:
+        meal = await repo.append_to_meal(
+            existing,
+            foods,
+            total_calories,
+            confidence,
+            model_id,
+            media_id=media_id,
+            text_entry=text_entry,
+        )
+        bucket_anchor = existing.logged_at
+    else:
+        meal = await repo.create_meal(
+            user_id,
+            foods,
+            total_calories,
+            confidence,
+            now,
+            model_id,
+            media_id=media_id,
+            text_entry=text_entry,
+        )
+        bucket_anchor = now
+
+    await _accumulate_daily_total(repo, user_id, bucket_anchor, foods, total_calories)
+    return meal
+
+
 async def log_meal_photo(
     user_id: str,
     media_id: str,
@@ -24,34 +80,11 @@ async def log_meal_photo(
     now: dt.datetime | None = None,
     model_id: str | None = None,
 ) -> MealRecord:
-    """Create a new meal entry, or append to an open one within the 10-minute
-    grouping window (FR-014, research.md #2). The window is anchored to the
-    *first* photo: appending does not extend it, so a meal always closes
-    exactly 10 minutes after it started, no matter how many photos arrive in
-    between. A sliding window (refreshing on every append) was tried and found
-    live to merge unrelated meals across an entire multi-hour test session.
-
-    `model_id`: which vision model produced `vision_result`, for live
-    traceability (FR-008, specs/003-vision-model-comparison)."""
-    now = now or dt.datetime.now(dt.UTC)
-    foods = vision_result["foods"]
-    total_calories = vision_result["total_calories"]
-    confidence = vision_result.get("confidence")
-
-    existing = await repo.find_open_meal(user_id, now, GROUPING_WINDOW)
-    if existing is not None:
-        meal = await repo.append_to_meal(
-            existing, media_id, foods, total_calories, confidence, model_id
-        )
-        bucket_anchor = existing.logged_at
-    else:
-        meal = await repo.create_meal(
-            user_id, media_id, foods, total_calories, confidence, now, model_id
-        )
-        bucket_anchor = now
-
-    await _accumulate_daily_total(repo, user_id, bucket_anchor, foods, total_calories)
-    return meal
+    """Thin, photo-only wrapper kept for existing call sites — see
+    log_meal_contribution for the shared grouping/accumulation logic."""
+    return await log_meal_contribution(
+        user_id, vision_result, repo, now, model_id, media_id=media_id
+    )
 
 
 async def _accumulate_daily_total(
@@ -183,15 +216,26 @@ def format_item_and_meal_reply(item_result: dict, meal: MealRecord) -> str:
     return "\n".join(lines)
 
 
-def _reply_for_logged_meal(item_result: dict, meal: MealRecord) -> str:
-    """One reply per photo, always — its shape depends on whether this photo
-    started a new meal (`format_range_reply`) or was appended to an
-    already-open one (`format_item_and_meal_reply`, showing this photo's own
-    contribution inline with the updated running total). A meal's
-    `photo_media_ids` has exactly 1 entry after `create_meal` and 2+ after
-    any `append_to_meal` — a reliable, already-available signal for which
-    case this is, with no extra DB read needed."""
-    if len(meal.photo_media_ids) > 1:
+def _contribution_count(meal: MealRecord) -> int:
+    """Total contributions to this meal regardless of origin — a photo and a
+    typed description (specs/005-text-meal-logging) each count once.
+    Replaces a bare `len(meal.photo_media_ids)` check, which undercounted a
+    meal with any text-only or mixed contributions."""
+    return len(meal.photo_media_ids) + len(meal.text_entries)
+
+
+def reply_for_logged_meal(item_result: dict, meal: MealRecord) -> str:
+    """One reply per contribution (photo or text), always — its shape
+    depends on whether this contribution started a new meal
+    (`format_range_reply`) or was appended to an already-open one
+    (`format_item_and_meal_reply`, showing this contribution's own impact
+    inline with the updated running total). A meal has exactly 1 total
+    contribution after `create_meal` and 2+ after any `append_to_meal` — a
+    reliable, already-available signal for which case this is, with no
+    extra DB read needed. Public (not `_`-prefixed): also called from
+    app/services/text_meal_logging.py, not just this module's own
+    handlers."""
+    if _contribution_count(meal) > 1:
         return format_item_and_meal_reply(item_result, meal)
     return format_range_reply(meal)
 
@@ -222,7 +266,7 @@ async def handle_incoming_photo(user_id: str, wa_phone: str, media_id: str) -> s
         # opaque cup, etc) — not for general uncertainty about visible food.
         # Most photos should reach the estimate path below instead.
         await queries.set_pending_clarification(
-            pool, user_id, media_id, media_type, clarifying_question
+            pool, user_id, media_type, clarifying_question, media_id=media_id
         )
         logger.info(
             "Photo from %s needs clarification (media_id=%s): %s",
@@ -242,18 +286,41 @@ async def handle_incoming_photo(user_id: str, wa_phone: str, media_id: str) -> s
         len(meal.photo_media_ids),
         meal.total_calories,
     )
-    return _reply_for_logged_meal(result, meal)
+    return reply_for_logged_meal(result, meal)
 
 
 async def handle_clarification_reply(user_id: str, wa_phone: str, text: str) -> str | None:
-    """Webhook-facing entrypoint for a text message. Returns None if this user
-    has no pending clarifying question (caller should treat the text as
-    unhandled — this is not a general-purpose chat, only the completion path
-    for calorie_vision.md's clarifying_question flow). Otherwise re-analyzes
-    the original photo with the user's answer and logs the meal."""
+    """Webhook-facing entrypoint for a text message. Returns None if this
+    user has no pending clarifying question, OR if `text` matches a safety
+    signal — the caller should treat the text as unhandled and fall through
+    to the next handler in the dispatch chain, which is exactly how
+    chat_fallback's own safety check gets a chance to run (this is not a
+    general-purpose chat, only the completion path for calorie_vision.md's
+    / calorie_text.md's clarifying_question flow otherwise). Otherwise
+    re-analyzes the original photo or text description with the user's
+    answer and logs the meal — same completion path regardless of which one
+    asked the question (specs/005-text-meal-logging,
+    contracts/text-dispatch-precedence.md).
+
+    The safety check is deliberately unconditional and checked first, ahead
+    of even looking up the pending clarification — mirrors the same fix
+    already applied in daily_target.handle_daily_target_reply (reviewer-
+    flagged there first): a pending clarification has no expiry, so without
+    this check a user's medical or disordered-eating disclosure sent as a
+    clarification answer (e.g. "how much chicken and rice" → "honestly I
+    haven't eaten in days") would be swallowed by NOT_FOOD_REPLY or a meal-
+    logged reply instead of ever reaching safety.check_safety_signal. A
+    safety signal always wins over a pending structured flow, no exceptions.
+    The pending clarification itself is deliberately left untouched (not
+    cleared) so the user can still answer it on a later message."""
+    from app.services import safety
+
+    if safety.check_safety_signal(text) is not None:
+        return None
+
     from app.db import queries
     from app.db.pool import get_pool
-    from app.services import vision
+    from app.services import text_analysis, vision
     from app.whatsapp import media as media_client
 
     pool = await get_pool()
@@ -262,17 +329,22 @@ async def handle_clarification_reply(user_id: str, wa_phone: str, text: str) -> 
         return None
 
     repo = queries.AsyncpgMealRepository(pool)
-    image_bytes, _ = await media_client.download_media(pending["media_id"])
-    result = await vision.analyze_photo(
-        image_bytes, media_type=pending["media_type"], clarification=text
-    )
+    is_text_origin = pending["media_type"] == "text"
+
+    if is_text_origin:
+        result = await text_analysis.analyze_text(pending["text_body"], clarification=text)
+    else:
+        image_bytes, _ = await media_client.download_media(pending["media_id"])
+        result = await vision.analyze_photo(
+            image_bytes, media_type=pending["media_type"], clarification=text
+        )
     await queries.clear_pending_clarification(pool, user_id)
 
     if not result["foods"]:
         logger.info(
-            "Clarified photo from %s still not recognized as food (media_id=%s)",
+            "Clarified %s from %s still not recognized as food",
+            "text description" if is_text_origin else "photo",
             _mask(wa_phone),
-            pending["media_id"],
         )
         return NOT_FOOD_REPLY
 
@@ -280,16 +352,26 @@ async def handle_clarification_reply(user_id: str, wa_phone: str, text: str) -> 
     # if the model still returns one — cap the back-and-forth at one round
     # trip and log the best-effort estimate rather than risk an unbounded
     # question loop.
-    meal = await log_meal_photo(
-        user_id, pending["media_id"], result, repo, model_id=settings.live_vision_model_id
-    )
+    if is_text_origin:
+        combined_entry = f"{pending['text_body']} (clarified: {text})"
+        meal = await log_meal_contribution(
+            user_id,
+            result,
+            repo,
+            model_id=settings.live_vision_model_id,
+            text_entry=combined_entry,
+        )
+    else:
+        meal = await log_meal_photo(
+            user_id, pending["media_id"], result, repo, model_id=settings.live_vision_model_id
+        )
     logger.info(
         "Logged clarified meal for %s (meal_id=%s, total_calories=%.0f)",
         _mask(wa_phone),
         meal.id,
         meal.total_calories,
     )
-    return _reply_for_logged_meal(result, meal)
+    return reply_for_logged_meal(result, meal)
 
 
 def _mask(phone: str) -> str:

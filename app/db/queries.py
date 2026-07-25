@@ -14,6 +14,7 @@ class MealRecord:
     user_id: str
     logged_at: dt.datetime
     photo_media_ids: list[str] = field(default_factory=list)
+    text_entries: list[str] = field(default_factory=list)
     foods: list[dict] = field(default_factory=list)
     total_calories: float = 0.0
     confidence: float | None = None
@@ -40,22 +41,26 @@ class MealRepository(Protocol):
     async def create_meal(
         self,
         user_id: str,
-        media_id: str,
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
         now: dt.datetime,
         model_id: str | None = None,
+        *,
+        media_id: str | None = None,
+        text_entry: str | None = None,
     ) -> MealRecord: ...
 
     async def append_to_meal(
         self,
         meal: MealRecord,
-        media_id: str,
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
         model_id: str | None = None,
+        *,
+        media_id: str | None = None,
+        text_entry: str | None = None,
     ) -> MealRecord: ...
 
     async def get_time_zone(self, user_id: str) -> str: ...
@@ -78,6 +83,7 @@ def _row_to_record(row) -> MealRecord:
         user_id=str(row["user_id"]),
         logged_at=row["logged_at"],
         photo_media_ids=list(row["photo_media_ids"]),
+        text_entries=list(row["text_entries"]),
         foods=json.loads(row["foods"]) if isinstance(row["foods"], str) else row["foods"],
         total_calories=float(row["total_calories"]),
         confidence=float(row["confidence"]) if row["confidence"] is not None else None,
@@ -105,21 +111,27 @@ class AsyncpgMealRepository:
     async def create_meal(
         self,
         user_id: str,
-        media_id: str,
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
         now: dt.datetime,
         model_id: str | None = None,
+        *,
+        media_id: str | None = None,
+        text_entry: str | None = None,
     ) -> MealRecord:
+        # Exactly one of media_id/text_entry is set per FR-005/data-model.md
+        # — a meal's first contribution came from either a photo or a typed
+        # description, never both and never neither.
         row = await self._pool.fetchrow(
-            "INSERT INTO meals (user_id, logged_at, photo_media_id, photo_media_ids, foods, "
-            "total_calories, confidence, model_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) "
-            "RETURNING *",
+            "INSERT INTO meals (user_id, logged_at, photo_media_id, photo_media_ids, "
+            "text_entries, foods, total_calories, confidence, model_id) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
             uuid.UUID(user_id),
             now,
             media_id,
-            [media_id],
+            [media_id] if media_id else [],
+            [text_entry] if text_entry else [],
             json.dumps(foods),
             total_calories,
             confidence,
@@ -130,11 +142,13 @@ class AsyncpgMealRepository:
     async def append_to_meal(
         self,
         meal: MealRecord,
-        media_id: str,
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
         model_id: str | None = None,
+        *,
+        media_id: str | None = None,
+        text_entry: str | None = None,
     ) -> MealRecord:
         # logged_at is deliberately NOT updated here: the grouping window is
         # anchored to the first photo (research.md #2 / FR-014), not sliding.
@@ -145,14 +159,16 @@ class AsyncpgMealRepository:
         # model_id: latest-write-wins, same as foods/total_calories being
         # combined — the meal row reflects whichever model most recently
         # contributed to it (FR-008).
-        combined_media = [*meal.photo_media_ids, media_id]
+        combined_media = [*meal.photo_media_ids, media_id] if media_id else meal.photo_media_ids
+        combined_text = [*meal.text_entries, text_entry] if text_entry else meal.text_entries
         combined_foods = [*meal.foods, *foods]
         combined_total = meal.total_calories + total_calories
         combined_confidence = _combine_confidence(meal.confidence, confidence)
         row = await self._pool.fetchrow(
-            "UPDATE meals SET photo_media_ids = $1, foods = $2, total_calories = $3, "
-            "confidence = $4, model_id = $5 WHERE id = $6 RETURNING *",
+            "UPDATE meals SET photo_media_ids = $1, text_entries = $2, foods = $3, "
+            "total_calories = $4, confidence = $5, model_id = $6 WHERE id = $7 RETURNING *",
             combined_media,
+            combined_text,
             json.dumps(combined_foods),
             combined_total,
             combined_confidence,
@@ -240,26 +256,41 @@ async def claim_message(pool, user_id: str, wa_message_id: str, kind: str) -> bo
 
 
 async def set_pending_clarification(
-    pool, user_id: str, media_id: str, media_type: str, question: str
+    pool,
+    user_id: str,
+    media_type: str,
+    question: str,
+    *,
+    media_id: str | None = None,
+    text_body: str | None = None,
 ) -> None:
-    """Remember the outstanding clarifying question (calorie_vision.md rule 6)
-    so a text reply can resume this photo's analysis instead of it being a
-    dead end. At most one pending clarification per user at a time."""
+    """Remember the outstanding clarifying question — calorie_vision.md rule
+    6 (photo) or calorie_text.md rule 5 (text) — so a follow-up reply can
+    resume the original analysis instead of it being a dead end. At most one
+    pending clarification per user at a time.
+
+    Exactly one of `media_id`/`text_body` is set: a photo-originated
+    question re-downloads the photo via `media_id` to complete the analysis
+    (unchanged); a text-originated question (specs/005-text-meal-logging)
+    has no photo to re-download, so the original message body is stored in
+    `text_body` instead, to be re-analyzed together with the user's answer."""
     await pool.execute(
-        "INSERT INTO pending_clarifications (user_id, media_id, media_type, question) "
-        "VALUES ($1, $2, $3, $4) "
+        "INSERT INTO pending_clarifications (user_id, media_id, media_type, text_body, question) "
+        "VALUES ($1, $2, $3, $4, $5) "
         "ON CONFLICT (user_id) DO UPDATE SET media_id = $2, media_type = $3, "
-        "question = $4, asked_at = now()",
+        "text_body = $4, question = $5, asked_at = now()",
         uuid.UUID(user_id),
         media_id,
         media_type,
+        text_body,
         question,
     )
 
 
 async def get_pending_clarification(pool, user_id: str) -> dict | None:
     row = await pool.fetchrow(
-        "SELECT media_id, media_type, question FROM pending_clarifications WHERE user_id = $1",
+        "SELECT media_id, media_type, text_body, question FROM pending_clarifications "
+        "WHERE user_id = $1",
         uuid.UUID(user_id),
     )
     return dict(row) if row else None

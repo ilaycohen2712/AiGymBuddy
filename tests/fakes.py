@@ -30,18 +30,21 @@ class InMemoryMealRepository:
     async def create_meal(
         self,
         user_id: str,
-        media_id: str,
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
         now: dt.datetime,
         model_id: str | None = None,
+        *,
+        media_id: str | None = None,
+        text_entry: str | None = None,
     ) -> MealRecord:
         meal = MealRecord(
             id=str(uuid.uuid4()),
             user_id=user_id,
             logged_at=now,
-            photo_media_ids=[media_id],
+            photo_media_ids=[media_id] if media_id else [],
+            text_entries=[text_entry] if text_entry else [],
             foods=list(foods),
             total_calories=total_calories,
             confidence=confidence,
@@ -53,16 +56,21 @@ class InMemoryMealRepository:
     async def append_to_meal(
         self,
         meal: MealRecord,
-        media_id: str,
         foods: list[dict],
         total_calories: float,
         confidence: float | None,
         model_id: str | None = None,
+        *,
+        media_id: str | None = None,
+        text_entry: str | None = None,
     ) -> MealRecord:
         # logged_at is deliberately left unchanged — the window is anchored to
         # the first photo, not sliding. See queries.py's AsyncpgMealRepository
         # for the full rationale.
-        meal.photo_media_ids.append(media_id)
+        if media_id:
+            meal.photo_media_ids.append(media_id)
+        if text_entry:
+            meal.text_entries.append(text_entry)
         meal.foods.extend(foods)
         meal.total_calories += total_calories
         meal.confidence = _combine_confidence(meal.confidence, confidence)
