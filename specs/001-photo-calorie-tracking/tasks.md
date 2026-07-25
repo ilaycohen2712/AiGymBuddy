@@ -82,15 +82,15 @@ description: "Task list template for feature implementation"
 
 ### Tests for User Story 2
 
-- [ ] T020 [P] [US2] Unit test for daily total aggregation math (calories, protein, carbs, fat) in `tests/unit/test_daily_totals.py`
-- [ ] T021 [P] [US2] Integration test for day-rollover reset (new calendar day starts fresh, per user's local time zone) in `tests/integration/test_daily_rollover.py`
+- [X] T020 [P] [US2] Unit test for daily total aggregation math (calories, protein, carbs, fat) in `tests/unit/test_daily_totals.py`
+- [X] T021 [P] [US2] Integration test for day-rollover reset (new calendar day starts fresh, per user's local time zone) in `tests/integration/test_daily_rollover.py`
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Migration adding `daily_totals.carbs_g` and `daily_totals.fat_g` columns in `app/db/migrations/0002_daily_totals_macros.sql`
-- [ ] T023 [US2] Implement `daily_totals` upsert logic (calories, protein, carbs, fat), mirroring the existing `protein_g` pattern, in `app/services/daily_totals.py` (depends on T022)
-- [ ] T024 [US2] Implement day-rollover logic keyed to the user's local time zone in `app/services/daily_totals.py`
-- [ ] T025 [US2] Wire `daily_totals` updates into the meal-logging flow from User Story 1 in `app/services/meal_logging.py` (depends on T023, T016)
+- [X] T022 [US2] Migration adding `daily_totals.carbs_g` and `daily_totals.fat_g` columns in `app/db/migrations/0002_daily_totals_macros.sql`
+- [X] T023 [US2] Implement `daily_totals` upsert logic (calories, protein, carbs, fat), mirroring the existing `protein_g` pattern, in `app/services/daily_totals.py` (depends on T022)
+- [X] T024 [US2] Implement day-rollover logic keyed to the user's local time zone in `app/services/daily_totals.py`
+- [X] T025 [US2] Wire `daily_totals` updates into the meal-logging flow from User Story 1 in `app/services/meal_logging.py` (depends on T023, T016)
 
 **Checkpoint**: User Stories 1 AND 2 both work independently — running total always equals the sum of the day's logged estimates (SC-005).
 
@@ -104,20 +104,20 @@ description: "Task list template for feature implementation"
 
 ### Tests for User Story 3
 
-- [ ] T026 [P] [US3] Contract test for daily-target collection and safety-floor rejection per `contracts/daily-target-collection.md` in `tests/contract/test_daily_target.py`
-- [ ] T027 [P] [US3] Contract test for end-of-day report schema and once-per-day idempotency per `contracts/eod-report.md` in `tests/contract/test_eod_report.py`
-- [ ] T028 [P] [US3] Integration test: a zero-meal day still receives exactly one encouraging (non-critical) report in `tests/integration/test_eod_report_flow.py`
+- [X] T026 [P] [US3] Contract test for daily-target collection and safety-floor rejection per `contracts/daily-target-collection.md` in `tests/contract/test_daily_target.py`
+- [X] T027 [P] [US3] Contract test for end-of-day report schema and once-per-day idempotency per `contracts/eod-report.md` in `tests/contract/test_eod_report.py`
+- [X] T028 [P] [US3] Integration test: a zero-meal day still receives exactly one encouraging (non-critical) report in `tests/integration/test_eod_report_flow.py`
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] Migration adding `users.daily_calorie_target` and new `daily_reports` table (unique on `user_id, date`) in `app/db/migrations/0003_daily_target_and_reports.sql`
-- [ ] T030 [P] [US3] Author versioned end-of-day feedback prompt (`{"feedback_text": "", "tone": "encouraging|neutral"}`, ≤600 chars, no medical advice/crash-diet pressure) per `contracts/eod-report.md` in `app/prompts/eod_feedback.md`
-- [ ] T031 [US3] Implement daily-target collection service: ask via chat, parse numeric reply, reject values below the 1200/1500 kcal safety floor and re-ask (FR-015) in `app/services/daily_target.py` (depends on T029)
-- [ ] T032 [US3] Implement end-of-day report service: read today's `daily_totals`, call the T030 prompt, validate its output schema in `app/services/eod_report.py` (depends on T029, T030)
-- [ ] T033 [US3] Implement idempotent report send — insert into `daily_reports`, treating a unique-constraint conflict as "already sent, skip" (FR-006, SC-003) in `app/services/eod_report.py` (depends on T032)
-- [ ] T034 [US3] Implement the scheduler trigger: per-user local-time check, invoke daily-target collection (T031) if no target set, else the end-of-day report (T033) in `app/scheduler/eod_trigger.py` (depends on T031, T033)
-- [ ] T035 [US3] Ensure every proactive message (target ask + report) is phrased to be answerable, keeping the 24h window open (FR-009) in `app/services/daily_target.py` and `app/services/eod_report.py`
-- [ ] T036 [US3] Run the `coach-simulator` agent against the new daily-regardless-of-activity report cadence (validates the deliberate deviation from `coach-persona/SKILL.md` flagged in plan.md's Constitution Check)
+- [X] T029 [US3] Migration adding `users.daily_calorie_target` and new `daily_reports` table (unique on `user_id, date`) in `app/db/migrations/0003_daily_target_and_reports.sql`
+- [X] T030 [P] [US3] Author versioned end-of-day feedback prompt (`{"feedback_text": "", "tone": "encouraging|neutral"}`, ≤600 chars, no medical advice/crash-diet pressure) per `contracts/eod-report.md` in `app/prompts/eod_feedback.md`
+- [X] T031 [US3] Implement daily-target collection service: ask via chat, parse numeric reply, reject values below the 1200/1500 kcal safety floor and re-ask (FR-015) in `app/services/daily_target.py` (depends on T029)
+- [X] T032 [US3] Implement end-of-day report service: read today's `daily_totals`, call the T030 prompt, validate its output schema in `app/services/eod_report.py` (depends on T029, T030)
+- [X] T033 [US3] Implement idempotent report send — insert into `daily_reports`, treating a unique-constraint conflict as "already sent, skip" (FR-006, SC-003) in `app/services/eod_report.py` (depends on T032)
+- [X] T034 [US3] Implement the scheduler trigger: per-user local-time check, invoke daily-target collection (T031) if no target set, else the end-of-day report (T033) in `app/scheduler/eod_trigger.py` (depends on T031, T033)
+- [X] T035 [US3] Ensure every proactive message (target ask + report) is phrased to be answerable, keeping the 24h window open (FR-009) in `app/services/daily_target.py` and `app/services/eod_report.py`
+- [X] T036 [US3] Run the `coach-simulator` agent against the new daily-regardless-of-activity report cadence (validates the deliberate deviation from `coach-persona/SKILL.md` flagged in plan.md's Constitution Check)
 
 **Checkpoint**: All three user stories are independently functional — this is the full MVP.
 
@@ -127,10 +127,10 @@ description: "Task list template for feature implementation"
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] T037 [P] Update `.claude/skills/coach-persona/SKILL.md`'s evening check-in bullet to match the new daily-report cadence (plan.md's flagged follow-up from the Constitution Check note)
-- [ ] T038 [P] Add consistent structured logging/error handling across `app/scheduler/` and `app/services/` (no PII, phone numbers masked)
+- [X] T037 [P] Update `.claude/skills/coach-persona/SKILL.md`'s evening check-in bullet to match the new daily-report cadence (plan.md's flagged follow-up from the Constitution Check note)
+- [X] T038 [P] Add consistent structured logging/error handling across `app/scheduler/` and `app/services/` (no PII, phone numbers masked)
 - [ ] T039 Run all four `quickstart.md` validation scenarios end-to-end
-- [ ] T040 [P] Documentation pass: confirm `CLAUDE.md` and skill references remain accurate after implementation
+- [X] T040 [P] Documentation pass: confirm `CLAUDE.md` and skill references remain accurate after implementation
 
 ---
 
