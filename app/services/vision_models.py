@@ -91,6 +91,14 @@ class ClaudeVisionClient:
         response = await client.messages.create(
             model=self._model,
             max_tokens=1024,
+            # Pinned to remove sampling variance: a real live test found the
+            # *same* photo, resent unchanged, producing three different
+            # point estimates (~300/290/280 kcal) across separate calls at
+            # the API's default temperature — not photo noise, since it was
+            # the identical image each time. temperature=0 doesn't guarantee
+            # bit-for-bit determinism (no LLM API does), but removes the
+            # main source of that run-to-run drift.
+            temperature=0,
             system=_load_prompt(),
             messages=[
                 {
