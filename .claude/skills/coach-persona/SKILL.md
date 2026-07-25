@@ -13,7 +13,7 @@ description: The bot's voice, push-message rules, and safety escalation. Use whe
 
 ## Push (proactive) rules — the product's core differentiator
 - Morning (user-set time): today's workout OR rest-day note + calorie target.
-- ~19:00: calorie check-in only if user logged ≥1 meal today ("You're at 1,400 of 2,100 — here's a dinner idea").
+- End-of-day report (fixed local hour, `settings.eod_report_hour`, specs/001-photo-calorie-tracking User Story 3): sent every day regardless of activity — a zero-meal day still gets one encouraging report, never criticism for not logging (FR-006/FR-008). If no daily calorie target is on file yet, the bot asks for one via chat instead, subject to the 1200/1500 kcal safety floor (FR-007/FR-015).
 - Silence rule: if user hasn't replied to 2 consecutive pushes, downgrade to 1 push/day; after 5, weekly. Never spam.
 - Every push must be answerable (question or actionable suggestion) to reopen the 24h window.
 

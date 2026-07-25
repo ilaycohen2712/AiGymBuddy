@@ -22,14 +22,33 @@ async def mark_as_read(message_id: str) -> None:
         resp.raise_for_status()
 
 
+async def send_template_message(to: str, template_name: str, language_code: str = "en_US") -> dict:
+    """Send a pre-approved template message — the only kind Meta allows once
+    the 24h customer-service window has expired (whatsapp-api skill). The
+    template itself must already be registered and approved in Meta Business
+    Manager; this only sends it by name. See app/whatsapp/templates.py for
+    the fallback logic that decides when to call this."""
+    url = f"{GRAPH_API_BASE}/{settings.whatsapp_phone_number_id}/messages"
+    headers = {"Authorization": f"Bearer {settings.whatsapp_access_token}"}
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "template",
+        "template": {"name": template_name, "language": {"code": language_code}},
+    }
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def send_text_message(to: str, body: str) -> dict:
-    # KNOWN GAP: no fallback to a pre-approved template message on error 131047
-    # (24h customer-service window expired). For User Story 1 this is
-    # low-probability — an inbound photo always reopens the window right
-    # before this call — but it's a real gap once proactive pushes exist
-    # (User Story 3's end-of-day report). app/whatsapp/templates.py and a
-    # 131047-specific fallback should land alongside that story rather than
-    # being silently skipped.
+    # Raises httpx.HTTPStatusError on a 131047 (24h window expired) same as
+    # any other upstream error — this function never falls back on its own.
+    # Callers making a proactive push (not a reply to an inbound message —
+    # currently only the end-of-day report/target ask, User Story 3) should
+    # go through app/whatsapp/templates.py::send_proactive_message instead,
+    # which catches exactly that error and falls back to a template send.
     if len(body) > MAX_TEXT_LENGTH:
         body = body[: MAX_TEXT_LENGTH - 1]
 

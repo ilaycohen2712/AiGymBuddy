@@ -59,9 +59,9 @@ async def receive_webhook(request: Request) -> dict:
 async def _dispatch_messages(payload: dict) -> None:
     """Route inbound messages to their handlers. Image handling is wired in by
     the meal-logging feature; text handling completes an outstanding
-    clarifying question (app/services/meal_logging.py) or a recognized
-    total-request (app/services/daily_total.py) — this is not a
-    general-purpose chat.
+    clarifying question (app/services/meal_logging.py), a pending daily-
+    target ask (app/services/daily_target.py), or a recognized total-request
+    (app/services/daily_total.py) — this is not a general-purpose chat.
 
     Every message is: claimed atomically by wa_message_id *before* any
     expensive work starts (Meta redelivers webhooks on timeout/non-2xx, and
@@ -73,7 +73,7 @@ async def _dispatch_messages(payload: dict) -> None:
     """
     from app.db import queries
     from app.db.pool import get_pool
-    from app.services import chat_fallback, meal_logging
+    from app.services import chat_fallback, daily_target, meal_logging
     from app.services import timezone as timezone_service
     from app.whatsapp import send
 
@@ -88,7 +88,14 @@ async def _dispatch_messages(payload: dict) -> None:
                     await _handle_image_message(pool, message, meal_logging, send, queries)
                 elif msg_type == "text":
                     await _handle_text_message(
-                        pool, message, meal_logging, chat_fallback, timezone_service, send, queries
+                        pool,
+                        message,
+                        meal_logging,
+                        daily_target,
+                        chat_fallback,
+                        timezone_service,
+                        send,
+                        queries,
                     )
                 elif msg_type == "location":
                     await _handle_location_message(
@@ -135,7 +142,7 @@ async def _handle_image_message(pool, message: dict, meal_logging, send, queries
 
 
 async def _handle_text_message(
-    pool, message: dict, meal_logging, chat_fallback, timezone_service, send, queries
+    pool, message: dict, meal_logging, daily_target, chat_fallback, timezone_service, send, queries
 ) -> None:
     message_id = message.get("id")
     wa_id = message.get("from")
@@ -154,17 +161,25 @@ async def _handle_text_message(
         if reply_text is None:
             # Not completing a pending clarification (FR-002: that flow
             # still takes priority, unaffected, and this branch is never
-            # reached while one is pending). Every other free-form text now
-            # always gets a reply — a safety escalation, a recognized
-            # supported-question answer, or the fixed fallback (spec
-            # 004-chat-responsiveness, FR-001/FR-009) — never silence.
+            # reached while one is pending). Next: a pending daily-target
+            # ask (specs/001-photo-calorie-tracking User Story 3,
+            # contracts/daily-target-collection.md) — added as a new layer
+            # after clarification, same shape as chat_fallback's own
+            # addition below, so neither disturbs the other's behavior.
+            reply_text = await daily_target.handle_daily_target_reply(user_id, wa_id, text_body)
+        if reply_text is None:
+            # Not a pending structured flow at all. Every other free-form
+            # text now always gets a reply — a safety escalation, a
+            # recognized supported-question answer, or the fixed fallback
+            # (spec 004-chat-responsiveness, FR-001/FR-009) — never silence.
             reply_text = await chat_fallback.handle_free_form_text(user_id, wa_id, text_body)
             # Independently of what chat_fallback answered, check for a
             # place mention that should update the user's stored time zone
             # (spec 002-daily-total-tracking User Story 4, FR-012). A
-            # clarification answer (the branch above) is deliberately
-            # excluded — it's descriptive context about a specific photo,
-            # not a general message about where the user is.
+            # clarification answer or a daily-target reply (the branches
+            # above) are deliberately excluded — each is descriptive/
+            # structured data about something specific, not a general
+            # message about where the user is.
             await _maybe_update_timezone_from_text(
                 pool, queries, timezone_service, user_id, wa_id, text_body
             )
