@@ -71,8 +71,8 @@ async def test_handle_daily_total_request_replies_with_range_from_stored_totals(
 
     assert reply is not None
     assert "kcal" in reply
-    assert "400" in reply  # 500 * 0.8
-    assert "600" in reply  # 500 * 1.2
+    assert "450" in reply  # 500 * 0.9
+    assert "550" in reply  # 500 * 1.1
 
 
 @pytest.mark.asyncio
@@ -111,10 +111,26 @@ def test_format_daily_total_reply_range_case():
     reply = daily_total.format_daily_total_reply(
         {"calories": 1000.0, "protein_g": 50.0, "carbs_g": 100.0, "fat_g": 30.0}
     )
-    assert "800-1200" in reply
+    assert "900-1100" in reply
     assert "50" in reply
     assert "100" in reply
     assert "30" in reply
+
+
+def test_format_daily_total_reply_uses_same_range_factor_as_meal_logging():
+    """Regression test: format_daily_total_reply used to hardcode its own
+    ±20% range while meal_logging.format_range_reply used ±10% — the same
+    underlying total_calories value produced two different-width ranges
+    depending on whether a user asked for their meal or their daily total,
+    confirmed live via a real WhatsApp conversation."""
+    from app.services import meal_logging
+
+    reply = daily_total.format_daily_total_reply(
+        {"calories": 440.0, "protein_g": 19.0, "carbs_g": 44.0, "fat_g": 21.0}
+    )
+    low = 440 * (1 - meal_logging.RANGE_FACTOR)
+    high = 440 * (1 + meal_logging.RANGE_FACTOR)
+    assert f"{low:.0f}-{high:.0f}" in reply
 
 
 @pytest.mark.asyncio

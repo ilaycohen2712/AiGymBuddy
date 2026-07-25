@@ -4,6 +4,8 @@ import datetime as dt
 import logging
 from zoneinfo import ZoneInfo
 
+from app.services.meal_logging import RANGE_FACTOR
+
 logger = logging.getLogger(__name__)
 
 # Best-effort phrase/keyword recognition (Hebrew + English), not open-ended
@@ -30,15 +32,22 @@ def _is_daily_total_request(text: str) -> bool:
 
 
 def format_daily_total_reply(totals: dict) -> str:
-    """Present today's running total as a ±20% range, same convention as
-    meal_logging.format_range_reply (FR-006 — never a false-precision exact
-    number). A zero total (SC-004) gets a friendly fixed message instead of
-    a literal "0-0 kcal" range."""
+    """Present today's running total as a range, using the same RANGE_FACTOR
+    as meal_logging.format_range_reply (FR-006 — never a false-precision
+    exact number, and never a *different* range width than the per-meal
+    replies that fed into this same total — see meal_logging.py's ±10%
+    narrowing note; this used to be hardcoded to its own ±20%, which meant
+    an on-demand total reply and the meal reply that produced it disagreed
+    on the range for the identical underlying number, confirmed live). A
+    zero total (SC-004) gets a friendly fixed message instead of a literal
+    "0-0 kcal" range."""
     calories = totals["calories"]
     if calories <= 0:
         return NO_MEALS_YET_REPLY
+    low = calories * (1 - RANGE_FACTOR)
+    high = calories * (1 + RANGE_FACTOR)
     return (
-        f"So far today: about {calories * 0.8:.0f}-{calories * 1.2:.0f} kcal "
+        f"So far today: about {low:.0f}-{high:.0f} kcal "
         f"(protein ~{totals['protein_g']:.0f}g, carbs ~{totals['carbs_g']:.0f}g, "
         f"fat ~{totals['fat_g']:.0f}g)."
     )
