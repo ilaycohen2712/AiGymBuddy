@@ -5,5 +5,82 @@
     "expected_protein_g": 42,
     "expected_carbs_g": 22,
     "expected_fat_g": 24
+  },
+  {
+    "image": "salad_cherry_tomato_feta.jpg",
+    "expected_calories": 300,
+    "expected_protein_g": 12,
+    "expected_carbs_g": 10,
+    "expected_fat_g": 25
+  },
+  {
+    "image": "salad_tomato_iceberg_feta.jpg",
+    "expected_calories": 200,
+    "expected_protein_g": 6,
+    "expected_carbs_g": 9,
+    "expected_fat_g": 15
+  },
+  {
+    "image": "penne_pasta_tomato_sauce.jpg",
+    "expected_calories": 410,
+    "expected_protein_g": 17,
+    "expected_carbs_g": 50,
+    "expected_fat_g": 16
+  },
+  {
+    "image": "fried_eggs_shakshuka_avocado.jpg",
+    "expected_calories": 490,
+    "expected_protein_g": 26,
+    "expected_carbs_g": 13,
+    "expected_fat_g": 37
+  },
+  {
+    "image": "ground_beef_potatoes_eggplant.jpg",
+    "expected_calories": 700,
+    "expected_protein_g": 47,
+    "expected_carbs_g": 35,
+    "expected_fat_g": 42
+  },
+  {
+    "image": "braised_meat_potatoes_cucumber.jpg",
+    "expected_calories": 800,
+    "expected_protein_g": 65,
+    "expected_carbs_g": 35,
+    "expected_fat_g": 48
+  },
+  {
+    "image": "sliced_steak_small_portion.jpg",
+    "expected_calories": 410,
+    "expected_protein_g": 45,
+    "expected_carbs_g": 0,
+    "expected_fat_g": 27
+  },
+  {
+    "image": "sliced_steak_large_platter.jpg",
+    "expected_calories": 1080,
+    "expected_protein_g": 118,
+    "expected_carbs_g": 0,
+    "expected_fat_g": 71
+  },
+  {
+    "image": "cheese_pizza_whole.jpg",
+    "expected_calories": 2100,
+    "expected_protein_g": 85,
+    "expected_carbs_g": 240,
+    "expected_fat_g": 80
+  },
+  {
+    "image": "sushi_rolls_noodles.jpg",
+    "expected_calories": 770,
+    "expected_protein_g": 34,
+    "expected_carbs_g": 75,
+    "expected_fat_g": 37
+  },
+  {
+    "image": "two_burgers_fries.jpg",
+    "expected_calories": 1650,
+    "expected_protein_g": 100,
+    "expected_carbs_g": 140,
+    "expected_fat_g": 80
   }
 ]
