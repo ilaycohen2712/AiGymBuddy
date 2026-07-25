@@ -728,8 +728,8 @@ def test_total_request_replies_with_range_from_daily_totals(monkeypatch):
 
     assert resp.status_code == 200
     assert "kcal" in sent["body"]
-    assert "720" in sent["body"]  # 900 * 0.8
-    assert "1080" in sent["body"]  # 900 * 1.2
+    assert "810" in sent["body"]  # 900 * 0.9
+    assert "990" in sent["body"]  # 900 * 1.1
     assert calls["recorded"] == ("user-for-15551234567", "wamid.total1", "in", "text")
 
 

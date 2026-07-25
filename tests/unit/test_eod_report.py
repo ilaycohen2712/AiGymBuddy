@@ -75,8 +75,8 @@ def test_format_report_message_reuses_daily_total_formatting():
 
     message = eod_report.format_report_message(totals, "Great consistency today!")
 
-    assert "1440" in message  # 1800 * 0.8
-    assert "2160" in message  # 1800 * 1.2
+    assert "1620" in message  # 1800 * 0.9
+    assert "1980" in message  # 1800 * 1.1
     assert message.endswith("Great consistency today!")
 
 
