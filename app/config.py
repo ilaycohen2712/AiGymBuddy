@@ -9,8 +9,9 @@ class Settings(BaseSettings):
     whatsapp_access_token: str = ""
     whatsapp_phone_number_id: str = ""
     anthropic_api_key: str = ""
+    gemini_api_key: str = ""
     database_url: str = ""
-    live_vision_model_id: str = "claude-sonnet-5"
+    live_vision_model_id: str = "gemini-flash-latest"
     # Fixed local hour (0-23) the end-of-day report/target-ask fires at for
     # every user — not user-configurable in the MVP (spec 001, Assumptions).
     eod_report_hour: int = 21

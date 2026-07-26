@@ -27,8 +27,10 @@ def _load_manifest() -> list[dict]:
     reason="No labeled fixtures yet — see tests/fixtures/food_photos/README.md",
 )
 @pytest.mark.skipif(
-    not os.environ.get("ANTHROPIC_API_KEY"),
-    reason="Requires a real ANTHROPIC_API_KEY to call the vision pipeline",
+    not os.environ.get("GEMINI_API_KEY"),
+    reason="Requires a real GEMINI_API_KEY to call the live vision pipeline "
+    "(specs/006-gemini-flash-migration — live_vision_model_id defaults to a "
+    "Gemini Flash registry entry)",
 )
 @pytest.mark.asyncio
 async def test_calorie_estimate_mean_absolute_error_within_threshold():

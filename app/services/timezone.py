@@ -1,23 +1,18 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 from zoneinfo import available_timezones
 
-import anthropic
 import phonenumbers
 from timezonefinder import TimezoneFinder
 
-from app.config import settings
+from app.services.text_models import MODEL_REGISTRY
 
 logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "timezone_extraction.md"
-_EXTRACTION_MODEL = "claude-haiku-4-5"
-
-_client: anthropic.AsyncAnthropic | None = None
-_client_lock = asyncio.Lock()
+_EXTRACTION_MODEL = "gemini-flash-latest"
 
 # Loads its coordinate-boundary data once at import time; cheap, synchronous,
 # CPU-only lookups thereafter (no network, no API key — research.md #3).
@@ -106,15 +101,6 @@ def timezone_from_location(latitude: float, longitude: float) -> str | None:
     return tz
 
 
-async def _get_client() -> anthropic.AsyncAnthropic:
-    global _client
-    if _client is None:
-        async with _client_lock:
-            if _client is None:  # re-check: another task may have won the race
-                _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    return _client
-
-
 def _load_prompt() -> str:
     return PROMPT_PATH.read_text()
 
@@ -123,19 +109,14 @@ async def extract_timezone_from_text(text: str) -> str | None:
     """Best-effort extraction of a place the user says they're currently in,
     mapped to an IANA time zone (spec 002-daily-total-tracking, User Story
     4, FR-012), via a small/cheap model — a simple text-classification task,
-    distinct from the Sonnet-class vision model used for photo analysis
+    distinct from the vision-capable model used for photo analysis
     (research.md #4). Returns None if no place is mentioned, it's ambiguous,
     or the model's answer doesn't validate as a real IANA zone (FR-013) —
     callers must leave the stored time zone unchanged in that case, never
     guess on top of a None."""
-    client = await _get_client()
-    response = await client.messages.create(
-        model=_EXTRACTION_MODEL,
-        max_tokens=64,
-        system=_load_prompt(),
-        messages=[{"role": "user", "content": text}],
-    )
-    reply = "".join(block.text for block in response.content if block.type == "text").strip()
+    client = MODEL_REGISTRY[_EXTRACTION_MODEL]
+    response_text = await client.generate(_load_prompt(), text, max_tokens=64)
+    reply = response_text.strip()
     if reply == "NONE" or reply not in available_timezones():
         return None
     return reply
