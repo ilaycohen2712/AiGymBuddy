@@ -61,9 +61,27 @@ class GeminiTextClient:
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 max_output_tokens=max_tokens,
+                # Confirmed live (specs/006-gemini-flash-migration): this
+                # model's default "thinking" pass consumes part of
+                # max_output_tokens before producing its actual answer, the
+                # same class of problem ClaudeVisionClient works around by
+                # budgeting extra tokens (see its docstring) — except here a
+                # small, deliberately tight budget (64-256 tokens for a
+                # single-line JSON/plain-text answer) left no room left for
+                # the answer once thinking ate into it, truncating the JSON
+                # mid-string. These call sites need no reasoning — schema-
+                # constrained, single-turn classification/extraction — so
+                # disable it outright rather than inflating every budget.
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
-        return response.text
+        text = response.text
+        if not text:
+            finish_reason = response.candidates[0].finish_reason if response.candidates else None
+            raise ValueError(
+                f"Text model returned no answer text (finish_reason={finish_reason!r})"
+            )
+        return text
 
 
 MODEL_REGISTRY: dict[str, TextModelClient] = {
