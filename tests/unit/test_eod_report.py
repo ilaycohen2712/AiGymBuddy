@@ -3,35 +3,21 @@ import pytest
 from app.services import eod_report
 
 
-class _FakeResponse:
-    def __init__(self, text: str) -> None:
-        self.text = text
+class _FakeTextClient:
+    """A TextModelClient test double (app/services/text_models.py) — always
+    replies with `reply_text`, regardless of prompt/content passed in."""
 
-
-class _FakeModels:
     def __init__(self, reply_text: str) -> None:
         self._reply_text = reply_text
 
-    async def generate_content(self, **kwargs):
-        return _FakeResponse(self._reply_text)
-
-
-class _FakeAio:
-    def __init__(self, reply_text: str) -> None:
-        self.models = _FakeModels(reply_text)
-
-
-class _FakeClient:
-    def __init__(self, reply_text: str) -> None:
-        self.aio = _FakeAio(reply_text)
+    async def generate(self, system_instruction: str, user_content: str, max_tokens: int) -> str:
+        return self._reply_text
 
 
 @pytest.mark.asyncio
 async def test_generate_feedback_returns_validated_schema(monkeypatch):
-    async def fake_get_client():
-        return _FakeClient('{"feedback_text": "Nice work today!", "tone": "encouraging"}')
-
-    monkeypatch.setattr(eod_report.gemini_client, "get_client", fake_get_client)
+    fake_client = _FakeTextClient('{"feedback_text": "Nice work today!", "tone": "encouraging"}')
+    monkeypatch.setitem(eod_report.MODEL_REGISTRY, eod_report._FEEDBACK_MODEL, fake_client)
 
     result = await eod_report.generate_feedback(
         {"calories": 1800.0, "protein_g": 100.0, "carbs_g": 200.0, "fat_g": 60.0}, 2000
@@ -42,10 +28,8 @@ async def test_generate_feedback_returns_validated_schema(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_generate_feedback_raises_on_invalid_tone(monkeypatch):
-    async def fake_get_client():
-        return _FakeClient('{"feedback_text": "ok", "tone": "critical"}')
-
-    monkeypatch.setattr(eod_report.gemini_client, "get_client", fake_get_client)
+    fake_client = _FakeTextClient('{"feedback_text": "ok", "tone": "critical"}')
+    monkeypatch.setitem(eod_report.MODEL_REGISTRY, eod_report._FEEDBACK_MODEL, fake_client)
 
     with pytest.raises(ValueError):
         await eod_report.generate_feedback(
@@ -57,10 +41,8 @@ async def test_generate_feedback_raises_on_invalid_tone(monkeypatch):
 async def test_generate_feedback_truncates_overlong_text(monkeypatch):
     long_text = "x" * 700
 
-    async def fake_get_client():
-        return _FakeClient(f'{{"feedback_text": "{long_text}", "tone": "neutral"}}')
-
-    monkeypatch.setattr(eod_report.gemini_client, "get_client", fake_get_client)
+    fake_client = _FakeTextClient(f'{{"feedback_text": "{long_text}", "tone": "neutral"}}')
+    monkeypatch.setitem(eod_report.MODEL_REGISTRY, eod_report._FEEDBACK_MODEL, fake_client)
 
     result = await eod_report.generate_feedback(
         {"calories": 3000.0, "protein_g": 100.0, "carbs_g": 300.0, "fat_g": 100.0}, 2000

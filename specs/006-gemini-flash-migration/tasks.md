@@ -221,6 +221,46 @@ independently pass their own tests.
 - Within US3, T011/T012 (test doubles) and T013/T014 (implementation) touch
   different files and can run in parallel with each other.
 
+## Phase 7: Follow-up — Provider-swap abstraction for the other three call sites
+
+**Purpose**: The vision call site could already swap providers cheaply via
+`MODEL_REGISTRY` (spec 003). Requested as a follow-up: give
+`text_analysis.py` / `eod_report.py` / `timezone.py` the same swappability,
+rather than leaving them hardcoded to whichever provider is currently live.
+
+- [X] T020 Create `app/services/text_models.py`: `TextModelClient` Protocol
+      (`generate(system_instruction, user_content, max_tokens) -> str`),
+      `ClaudeTextClient` / `GeminiTextClient` implementations, and
+      `MODEL_REGISTRY` seeded with `claude-sonnet-5`, `claude-haiku-4-5`,
+      and `gemini-flash-latest` — mirrors `vision_models.py` one level
+      below the vision-specific (image-handling) concerns.
+- [X] T021 Rewire `text_analysis.py`, `eod_report.py`, `timezone.py` to
+      resolve a client from `MODEL_REGISTRY` (keyed by
+      `settings.live_vision_model_id`, `_FEEDBACK_MODEL`,
+      `_EXTRACTION_MODEL` respectively) and call `.generate(...)`, instead
+      of calling `gemini_client.get_client()` directly. Each file's own
+      prompt loading and JSON/plain-text extraction/validation is
+      unchanged.
+- [X] T022 Update `tests/unit/test_eod_report.py` and
+      `tests/unit/test_timezone.py` to monkeypatch a `_FakeTextClient` into
+      `MODEL_REGISTRY` (`monkeypatch.setitem`) instead of patching
+      `gemini_client.get_client` / mocking the Gemini SDK response shape —
+      tests now target the Protocol, not a specific provider's SDK.
+- [X] T023 Add `tests/unit/test_text_models.py` asserting the registry has
+      both Claude and Gemini entries and the right concrete types, mirroring
+      `test_vision_models.py`.
+- [X] T024 Full suite + lint green; amend research.md decision #5 to record
+      that this reverses its original "no shared abstraction" call now that
+      swappability was explicitly requested.
+
+**Result**: switching any of the four call sites to a different provider in
+the future (back to Claude, or to a third provider implementing the
+relevant Protocol) is now a one-line model-id change for all four, not a
+file-by-file rewrite — vision via `settings.live_vision_model_id` /
+`MODEL_REGISTRY`, the other three via `text_models.MODEL_REGISTRY`.
+
+---
+
 ## Implementation Strategy
 
 **MVP first**: T001-T008 (Setup → Foundational → US1) gets the

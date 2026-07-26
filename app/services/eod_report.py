@@ -6,10 +6,8 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from google.genai import types
-
-from app.services import gemini_client
 from app.services.daily_total import format_daily_total_reply
+from app.services.text_models import MODEL_REGISTRY
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +67,7 @@ async def generate_feedback(totals: dict, target: int) -> dict:
     response — callers must handle this and fall back gracefully rather than
     let one bad report crash the scheduler's whole run for every other
     user."""
-    client = await gemini_client.get_client()
+    client = MODEL_REGISTRY[_FEEDBACK_MODEL]
     zero_meal_day = totals["calories"] <= 0
     user_content = (
         f"Total calories eaten today: {totals['calories']:.0f}\n"
@@ -79,15 +77,8 @@ async def generate_feedback(totals: dict, target: int) -> dict:
         f"Daily calorie target: {target}\n"
         f"No meals logged today: {zero_meal_day}"
     )
-    response = await client.aio.models.generate_content(
-        model=_FEEDBACK_MODEL,
-        contents=user_content,
-        config=types.GenerateContentConfig(
-            system_instruction=_load_prompt(),
-            max_output_tokens=256,
-        ),
-    )
-    return _validate_feedback(_extract_json_block(response.text))
+    response_text = await client.generate(_load_prompt(), user_content, max_tokens=256)
+    return _validate_feedback(_extract_json_block(response_text))
 
 
 def format_report_message(totals: dict, feedback_text: str) -> str:

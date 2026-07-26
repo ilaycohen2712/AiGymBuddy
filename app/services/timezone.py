@@ -5,10 +5,9 @@ from pathlib import Path
 from zoneinfo import available_timezones
 
 import phonenumbers
-from google.genai import types
 from timezonefinder import TimezoneFinder
 
-from app.services import gemini_client
+from app.services.text_models import MODEL_REGISTRY
 
 logger = logging.getLogger(__name__)
 
@@ -115,16 +114,9 @@ async def extract_timezone_from_text(text: str) -> str | None:
     or the model's answer doesn't validate as a real IANA zone (FR-013) —
     callers must leave the stored time zone unchanged in that case, never
     guess on top of a None."""
-    client = await gemini_client.get_client()
-    response = await client.aio.models.generate_content(
-        model=_EXTRACTION_MODEL,
-        contents=text,
-        config=types.GenerateContentConfig(
-            system_instruction=_load_prompt(),
-            max_output_tokens=64,
-        ),
-    )
-    reply = response.text.strip()
+    client = MODEL_REGISTRY[_EXTRACTION_MODEL]
+    response_text = await client.generate(_load_prompt(), text, max_tokens=64)
+    reply = response_text.strip()
     if reply == "NONE" or reply not in available_timezones():
         return None
     return reply

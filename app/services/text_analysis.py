@@ -2,10 +2,8 @@ import json
 import re
 from pathlib import Path
 
-from google.genai import types
-
 from app.config import settings
-from app.services import gemini_client
+from app.services.text_models import MODEL_REGISTRY
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "calorie_text.md"
 
@@ -81,7 +79,7 @@ async def analyze_text(text: str, clarification: str | None = None) -> dict:
     pass the user's answer here so the model can complete a full analysis
     of the *original* text instead of asking again (prompt rule 9), mirroring
     app/services/vision.py::analyze_photo's `clarification` parameter."""
-    client = await gemini_client.get_client()
+    client = MODEL_REGISTRY[settings.live_vision_model_id]
 
     user_content = text
     if clarification:
@@ -90,14 +88,7 @@ async def analyze_text(text: str, clarification: str | None = None) -> dict:
             f"here is the user's answer: {clarification}"
         )
 
-    response = await client.aio.models.generate_content(
-        model=settings.live_vision_model_id,
-        contents=user_content,
-        config=types.GenerateContentConfig(
-            system_instruction=_load_prompt(),
-            max_output_tokens=1024,
-        ),
-    )
+    response_text = await client.generate(_load_prompt(), user_content, max_tokens=1024)
 
-    result = _extract_json_block(response.text)
+    result = _extract_json_block(response_text)
     return _validate_schema(result)

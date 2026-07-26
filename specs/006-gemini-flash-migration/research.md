@@ -128,6 +128,22 @@ differ per call site and coupling them would cost more than it saves.
   (these three call sites don't need Protocol-style swappability; nothing
   compares against them).
 
+**Superseded**: after this migration shipped, the user explicitly asked for
+future-proof swappability on these three call sites too (not just vision) —
+see `app/services/text_models.py`, added as a follow-up. A `TextModelClient`
+Protocol (`generate(system_instruction, user_content, max_tokens) -> str`)
+plus a `MODEL_REGISTRY` (`ClaudeTextClient` / `GeminiTextClient` entries)
+now sits between `gemini_client.get_client()` and all three call sites,
+mirroring `vision_models.py`'s pattern one level down (text-only, no image
+handling). Each call site still owns its own prompt/JSON-or-plain-text
+extraction/validation — only "which model answers" is now a one-line change
+(the `_FEEDBACK_MODEL` / `_EXTRACTION_MODEL` constant, or
+`settings.live_vision_model_id` for `text_analysis.py`) rather than an edit
+to the call-site file itself. This reverses the rejection above: it wasn't
+wrong when this file was written (there was no real second-provider need
+yet), but "swap providers again easily" turned out to be a real requirement
+once asked directly, not a hypothetical one.
+
 ## 6. How does multimodal (image) content shape change?
 
 **Decision**: `ClaudeVisionClient`'s base64-encoded `image` content block

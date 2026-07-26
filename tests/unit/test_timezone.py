@@ -3,35 +3,23 @@ import pytest
 from app.services import timezone as timezone_module
 
 
-class _FakeResponse:
-    def __init__(self, text: str) -> None:
-        self.text = text
+class _FakeTextClient:
+    """A TextModelClient test double (app/services/text_models.py) — always
+    replies with `reply_text`, regardless of prompt/content passed in."""
 
-
-class _FakeModels:
     def __init__(self, reply_text: str) -> None:
         self._reply_text = reply_text
 
-    async def generate_content(self, **kwargs):
-        return _FakeResponse(self._reply_text)
-
-
-class _FakeAio:
-    def __init__(self, reply_text: str) -> None:
-        self.models = _FakeModels(reply_text)
-
-
-class _FakeClient:
-    def __init__(self, reply_text: str) -> None:
-        self.aio = _FakeAio(reply_text)
+    async def generate(self, system_instruction: str, user_content: str, max_tokens: int) -> str:
+        return self._reply_text
 
 
 @pytest.mark.asyncio
 async def test_extract_timezone_from_text_returns_zone_for_recognizable_place(monkeypatch):
-    async def fake_get_client():
-        return _FakeClient("Asia/Tokyo")
-
-    monkeypatch.setattr(timezone_module.gemini_client, "get_client", fake_get_client)
+    fake_client = _FakeTextClient("Asia/Tokyo")
+    monkeypatch.setitem(
+        timezone_module.MODEL_REGISTRY, timezone_module._EXTRACTION_MODEL, fake_client
+    )
 
     result = await timezone_module.extract_timezone_from_text("just landed in Tokyo!")
 
@@ -40,10 +28,10 @@ async def test_extract_timezone_from_text_returns_zone_for_recognizable_place(mo
 
 @pytest.mark.asyncio
 async def test_extract_timezone_from_text_returns_none_for_explicit_none(monkeypatch):
-    async def fake_get_client():
-        return _FakeClient("NONE")
-
-    monkeypatch.setattr(timezone_module.gemini_client, "get_client", fake_get_client)
+    fake_client = _FakeTextClient("NONE")
+    monkeypatch.setitem(
+        timezone_module.MODEL_REGISTRY, timezone_module._EXTRACTION_MODEL, fake_client
+    )
 
     result = await timezone_module.extract_timezone_from_text("thanks for the tip!")
 
@@ -56,10 +44,10 @@ async def test_extract_timezone_from_text_returns_none_for_invalid_zone_name(mon
     something that isn't NONE, it must be a real IANA zone or it's treated
     as unrecognized — never persisted as-is."""
 
-    async def fake_get_client():
-        return _FakeClient("Not/A/Real/Zone")
-
-    monkeypatch.setattr(timezone_module.gemini_client, "get_client", fake_get_client)
+    fake_client = _FakeTextClient("Not/A/Real/Zone")
+    monkeypatch.setitem(
+        timezone_module.MODEL_REGISTRY, timezone_module._EXTRACTION_MODEL, fake_client
+    )
 
     result = await timezone_module.extract_timezone_from_text("some ambiguous message")
 
