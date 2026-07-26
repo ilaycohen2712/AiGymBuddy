@@ -1,42 +1,29 @@
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-import anthropic
+from google.genai import types
 
-from app.config import settings
+from app.services import gemini_client
 from app.services.daily_total import format_daily_total_reply
 
 logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "eod_feedback.md"
-_FEEDBACK_MODEL = "claude-haiku-4-5"
+_FEEDBACK_MODEL = "gemini-flash-latest"
 # The sent message is the totals line (format_daily_total_reply, typically
 # under 100 chars) plus this feedback text — capped below coach-persona's
 # "~600 chars" voice guideline, not at it, so the combined message still
 # fits that guideline rather than only the feedback half of it.
 FEEDBACK_MAX_CHARS = 500
 
-_client: anthropic.AsyncAnthropic | None = None
-_client_lock = asyncio.Lock()
-
 
 def _load_prompt() -> str:
     return PROMPT_PATH.read_text()
-
-
-async def _get_client() -> anthropic.AsyncAnthropic:
-    global _client
-    if _client is None:
-        async with _client_lock:
-            if _client is None:  # re-check: another task may have won the race
-                _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    return _client
 
 
 def _extract_json_block(text: str) -> dict:
@@ -82,7 +69,7 @@ async def generate_feedback(totals: dict, target: int) -> dict:
     response — callers must handle this and fall back gracefully rather than
     let one bad report crash the scheduler's whole run for every other
     user."""
-    client = await _get_client()
+    client = await gemini_client.get_client()
     zero_meal_day = totals["calories"] <= 0
     user_content = (
         f"Total calories eaten today: {totals['calories']:.0f}\n"
@@ -92,14 +79,15 @@ async def generate_feedback(totals: dict, target: int) -> dict:
         f"Daily calorie target: {target}\n"
         f"No meals logged today: {zero_meal_day}"
     )
-    response = await client.messages.create(
+    response = await client.aio.models.generate_content(
         model=_FEEDBACK_MODEL,
-        max_tokens=256,
-        system=_load_prompt(),
-        messages=[{"role": "user", "content": user_content}],
+        contents=user_content,
+        config=types.GenerateContentConfig(
+            system_instruction=_load_prompt(),
+            max_output_tokens=256,
+        ),
     )
-    text = "".join(block.text for block in response.content if block.type == "text")
-    return _validate_feedback(_extract_json_block(text))
+    return _validate_feedback(_extract_json_block(response.text))
 
 
 def format_report_message(totals: dict, feedback_text: str) -> str:

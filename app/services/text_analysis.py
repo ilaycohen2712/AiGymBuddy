@@ -1,16 +1,13 @@
-import asyncio
 import json
 import re
 from pathlib import Path
 
-import anthropic
+from google.genai import types
 
 from app.config import settings
+from app.services import gemini_client
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "calorie_text.md"
-
-_client: anthropic.AsyncAnthropic | None = None
-_client_lock = asyncio.Lock()
 
 _FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
@@ -66,15 +63,6 @@ def _validate_schema(result: dict) -> dict:
     return result
 
 
-async def _get_client() -> anthropic.AsyncAnthropic:
-    global _client
-    if _client is None:
-        async with _client_lock:
-            if _client is None:  # re-check: another task may have won the race
-                _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    return _client
-
-
 async def analyze_text(text: str, clarification: str | None = None) -> dict:
     """Send a user's free-form text message to the currently designated live
     model (`settings.live_vision_model_id` — reused here rather than adding a
@@ -93,7 +81,7 @@ async def analyze_text(text: str, clarification: str | None = None) -> dict:
     pass the user's answer here so the model can complete a full analysis
     of the *original* text instead of asking again (prompt rule 9), mirroring
     app/services/vision.py::analyze_photo's `clarification` parameter."""
-    client = await _get_client()
+    client = await gemini_client.get_client()
 
     user_content = text
     if clarification:
@@ -102,13 +90,14 @@ async def analyze_text(text: str, clarification: str | None = None) -> dict:
             f"here is the user's answer: {clarification}"
         )
 
-    response = await client.messages.create(
+    response = await client.aio.models.generate_content(
         model=settings.live_vision_model_id,
-        max_tokens=1024,
-        system=_load_prompt(),
-        messages=[{"role": "user", "content": user_content}],
+        contents=user_content,
+        config=types.GenerateContentConfig(
+            system_instruction=_load_prompt(),
+            max_output_tokens=1024,
+        ),
     )
 
-    response_text = "".join(block.text for block in response.content if block.type == "text")
-    result = _extract_json_block(response_text)
+    result = _extract_json_block(response.text)
     return _validate_schema(result)

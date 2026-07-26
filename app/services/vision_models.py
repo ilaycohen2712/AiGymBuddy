@@ -5,8 +5,10 @@ from pathlib import Path
 from typing import Protocol
 
 import anthropic
+from google.genai import types
 
 from app.config import settings
+from app.services import gemini_client
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "calorie_vision.md"
 
@@ -135,7 +137,56 @@ class ClaudeVisionClient:
         return _validate_schema(result)
 
 
+class GeminiVisionClient:
+    """A single named Gemini model, callable through the shared
+    VisionModelClient contract — the Gemini counterpart to
+    ClaudeVisionClient (specs/006-gemini-flash-migration research.md #4).
+    Reuses the same prompt file, JSON extraction, and schema validation so a
+    comparison run measures the model, not the plumbing around it."""
+
+    def __init__(self, model: str) -> None:
+        self._model = model
+
+    async def analyze(
+        self,
+        image_bytes: bytes,
+        media_type: str = "image/jpeg",
+        clarification: str | None = None,
+    ) -> dict:
+        client = await gemini_client.get_client()
+
+        prompt_text = "Analyze this food photo."
+        if clarification:
+            prompt_text = (
+                "Analyze this food photo. You previously asked a clarifying question "
+                f"about it; here is the user's answer: {clarification}"
+            )
+
+        response = await client.aio.models.generate_content(
+            model=self._model,
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type=media_type),
+                prompt_text,
+            ],
+            config=types.GenerateContentConfig(
+                system_instruction=_load_prompt(),
+                max_output_tokens=4096,
+            ),
+        )
+
+        text = response.text
+        if not text:
+            raise ValueError(
+                "Vision model returned no answer text "
+                f"(finish_reason={response.candidates[0].finish_reason!r}) — likely the "
+                "max_output_tokens budget was exhausted before it produced an answer"
+            )
+        result = _extract_json_block(text)
+        return _validate_schema(result)
+
+
 MODEL_REGISTRY: dict[str, VisionModelClient] = {
     "claude-sonnet-5": ClaudeVisionClient("claude-sonnet-5"),
     "claude-opus-4-8": ClaudeVisionClient("claude-opus-4-8"),
+    "gemini-flash-latest": GeminiVisionClient("gemini-flash-latest"),
 }

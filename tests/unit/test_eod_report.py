@@ -3,28 +3,27 @@ import pytest
 from app.services import eod_report
 
 
-class _FakeBlock:
+class _FakeResponse:
     def __init__(self, text: str) -> None:
-        self.type = "text"
         self.text = text
 
 
-class _FakeResponse:
-    def __init__(self, text: str) -> None:
-        self.content = [_FakeBlock(text)]
-
-
-class _FakeMessages:
+class _FakeModels:
     def __init__(self, reply_text: str) -> None:
         self._reply_text = reply_text
 
-    async def create(self, **kwargs):
+    async def generate_content(self, **kwargs):
         return _FakeResponse(self._reply_text)
+
+
+class _FakeAio:
+    def __init__(self, reply_text: str) -> None:
+        self.models = _FakeModels(reply_text)
 
 
 class _FakeClient:
     def __init__(self, reply_text: str) -> None:
-        self.messages = _FakeMessages(reply_text)
+        self.aio = _FakeAio(reply_text)
 
 
 @pytest.mark.asyncio
@@ -32,7 +31,7 @@ async def test_generate_feedback_returns_validated_schema(monkeypatch):
     async def fake_get_client():
         return _FakeClient('{"feedback_text": "Nice work today!", "tone": "encouraging"}')
 
-    monkeypatch.setattr(eod_report, "_get_client", fake_get_client)
+    monkeypatch.setattr(eod_report.gemini_client, "get_client", fake_get_client)
 
     result = await eod_report.generate_feedback(
         {"calories": 1800.0, "protein_g": 100.0, "carbs_g": 200.0, "fat_g": 60.0}, 2000
@@ -46,7 +45,7 @@ async def test_generate_feedback_raises_on_invalid_tone(monkeypatch):
     async def fake_get_client():
         return _FakeClient('{"feedback_text": "ok", "tone": "critical"}')
 
-    monkeypatch.setattr(eod_report, "_get_client", fake_get_client)
+    monkeypatch.setattr(eod_report.gemini_client, "get_client", fake_get_client)
 
     with pytest.raises(ValueError):
         await eod_report.generate_feedback(
@@ -61,7 +60,7 @@ async def test_generate_feedback_truncates_overlong_text(monkeypatch):
     async def fake_get_client():
         return _FakeClient(f'{{"feedback_text": "{long_text}", "tone": "neutral"}}')
 
-    monkeypatch.setattr(eod_report, "_get_client", fake_get_client)
+    monkeypatch.setattr(eod_report.gemini_client, "get_client", fake_get_client)
 
     result = await eod_report.generate_feedback(
         {"calories": 3000.0, "protein_g": 100.0, "carbs_g": 300.0, "fat_g": 100.0}, 2000
